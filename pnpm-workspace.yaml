@@ -6,3 +6,5 @@ packages:
   - server
   - ui
   - cli
+  # iAlvesTEC custom modules — isolated from upstream to avoid merge conflicts
+  - iAlvesTEC/*

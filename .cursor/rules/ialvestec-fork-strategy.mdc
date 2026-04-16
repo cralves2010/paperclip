@@ -1,0 +1,48 @@
+---
+description: Rules for working in the iAlvesTEC Paperclip fork — keeps custom code isolated from upstream to prevent merge conflicts
+globs:
+alwaysApply: true
+---
+
+# iAlvesTEC Fork Strategy — Anti-Conflict Rules
+
+This repo is a fork of `paperclipai/paperclip` (remote `upstream`).
+Custom iAlvesTEC features live exclusively under `iAlvesTEC/`.
+
+## Golden rules
+
+1. **NEVER modify upstream-owned files.** The following directories belong to
+   upstream and must not be edited:
+   - `server/`, `ui/`, `cli/`, `packages/`, `scripts/`, `doc/`, `docs/`,
+     `docker/`, `tests/`, `evals/`, `patches/`, `.github/`
+   - Root config files: `package.json`, `tsconfig.base.json`, `Dockerfile`,
+     `vitest.config.ts`, `LICENSE`, `AGENTS.md`, `CONTRIBUTING.md`
+
+2. **Allowed touchpoints** (minimal, conflict-friendly edits only):
+   - `pnpm-workspace.yaml` — the `iAlvesTEC/*` line at the end (append-only)
+   - `tsconfig.json` — `iAlvesTEC/*` references appended to the `references` array
+   - `.gitignore` — iAlvesTEC-specific ignores appended at the end
+
+3. **All custom code goes inside `iAlvesTEC/`:**
+   - Each module is a separate pnpm workspace package
+   - Use `@ialvestec/` npm scope for all packages
+   - Depend on upstream packages via `"workspace:*"` (e.g. `@paperclipai/shared`)
+   - Never duplicate or monkey-patch upstream code
+
+4. **Syncing upstream:**
+   ```bash
+   git fetch upstream
+   git merge upstream/master
+   ```
+   Conflicts will only appear in the few lines we appended. Resolve by keeping
+   both upstream additions and iAlvesTEC additions.
+
+5. **Branch naming:** custom feature branches start with `iAlvesTEC/` prefix.
+
+## Package template
+
+Every new iAlvesTEC package under `iAlvesTEC/<name>/` should have:
+- `package.json` with `"name": "@ialvestec/<name>"`
+- `tsconfig.json` extending `../../tsconfig.base.json`
+- `src/` directory for source code
+- Registration in root `tsconfig.json` references array
