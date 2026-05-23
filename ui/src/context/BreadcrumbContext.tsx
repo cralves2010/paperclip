@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { getInstanceBrandName } from "@/lib/instance-branding";
 
 export interface Breadcrumb {
   label: string;
@@ -35,7 +36,10 @@ export function buildDocumentTitle(breadcrumbs: Breadcrumb[], companyName?: stri
     ? []
     : [...breadcrumbs].reverse().map((breadcrumb) => breadcrumb.label);
   const companyPart = companyName?.trim() ? [companyName.trim()] : [];
-  const parts = [...pageParts, ...companyPart, "Paperclip"];
+  // Brand suffix is overridable via PAPERCLIP_BRAND_NAME env at server boot.
+  // Falls back to "Paperclip" when instance branding is not configured.
+  const brandName = getInstanceBrandName() ?? "Paperclip";
+  const parts = [...pageParts, ...companyPart, brandName];
   return parts.join(" • ");
 }
 
