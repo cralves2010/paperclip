@@ -50,7 +50,8 @@ jobs:
       - name: Sync master (fast-forward only)
         id: master_sync
         run: |
-          git checkout master
+          # After adding upstream remote, "master" alone is ambiguous; be explicit
+          git checkout -B master origin/master
           BEFORE=$(git rev-parse HEAD)
           if git merge --ff-only upstream/${{ env.UPSTREAM_BRANCH }}; then
             AFTER=$(git rev-parse HEAD)
@@ -74,7 +75,8 @@ jobs:
         id: rebase
         if: steps.master_sync.outputs.result != 'diverged'
         run: |
-          git checkout ${{ env.BRANDING_BRANCH }}
+          # Use origin/<branch> to avoid ambiguity with the upstream remote
+          git checkout -B ${{ env.BRANDING_BRANCH }} origin/${{ env.BRANDING_BRANCH }}
           BEFORE=$(git rev-parse HEAD)
           if git rebase origin/master; then
             AFTER=$(git rev-parse HEAD)
