@@ -349,19 +349,25 @@ export async function createApp(
       );
       // Non-hashed static files (favicon.ico, manifest, robots.txt, etc.):
       // short cache so operators who swap them out see the new version
-      // reasonably fast. Override for `index.html` specifically — it is
-      // served by this middleware for `/` and `/index.html`, and it must
-      // never outlive the asset hashes it points at.
+      // reasonably fast.
+      // `index: false` disables auto-resolution of "/" to index.html so the
+      // SPA fallback below serves the branded HTML. Without this, "/" would
+      // bypass applyUiBranding entirely (the upstream behavior before this fix).
       app.use(
         express.static(uiDist, {
+          index: false,
           maxAge: "1h",
-          setHeaders(res, filePath) {
-            if (path.basename(filePath) === "index.html") {
-              res.set("Cache-Control", "no-cache");
-            }
-          },
         }),
       );
+      // Explicit /index.html serves the branded shell too, since some clients
+      // request it directly.
+      app.get(["/", "/index.html"], (_req, res) => {
+        res
+          .status(200)
+          .set("Content-Type", "text/html")
+          .set("Cache-Control", "no-cache")
+          .end(indexHtml);
+      });
       // SPA fallback. Only for non-asset routes — if the browser asks for
       // /assets/something.js that doesn't exist, we must NOT serve the HTML
       // shell: the browser would try to load it as a JavaScript module, fail
