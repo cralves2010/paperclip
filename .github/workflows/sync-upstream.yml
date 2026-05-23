@@ -1,0 +1,157 @@
+# Weekly sync from upstream paperclipai/paperclip into this fork.
+# Strategy: fast-forward master, then rebase branding/m42 onto it.
+# If anything diverges or conflicts, opens a GitHub issue for manual resolution.
+#
+# Schedule: Mondays 06:00 UTC (≈ 03:00 BRT).
+# Manual: Actions tab → "Sync from upstream" → Run workflow.
+
+name: Sync from upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: paperclipai/paperclip
+  UPSTREAM_BRANCH: master
+  BRANDING_BRANCH: branding/m42
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # PAT not needed because we only push to branches in this same repo
+          # and the default GITHUB_TOKEN has contents:write per permissions above.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity + rerere
+        run: |
+          git config user.name "sync-bot[m42]"
+          git config user.email "sync@m42ai.tech"
+          # rerere replays prior conflict resolutions automatically; cheap insurance
+          git config rerere.enabled true
+          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git || true
+          git fetch upstream ${{ env.UPSTREAM_BRANCH }} --tags
+
+      - name: Sync master (fast-forward only)
+        id: master_sync
+        run: |
+          git checkout master
+          BEFORE=$(git rev-parse HEAD)
+          if git merge --ff-only upstream/${{ env.UPSTREAM_BRANCH }}; then
+            AFTER=$(git rev-parse HEAD)
+            if [ "$BEFORE" = "$AFTER" ]; then
+              echo "result=up_to_date" >> "$GITHUB_OUTPUT"
+              echo "new_commits=0" >> "$GITHUB_OUTPUT"
+              echo "::notice::master already up to date with upstream"
+            else
+              COUNT=$(git rev-list --count "$BEFORE..$AFTER")
+              echo "result=synced" >> "$GITHUB_OUTPUT"
+              echo "new_commits=$COUNT" >> "$GITHUB_OUTPUT"
+              git push origin master
+              echo "::notice::synced $COUNT new commits to master"
+            fi
+          else
+            echo "result=diverged" >> "$GITHUB_OUTPUT"
+            echo "::error::master has commits not in upstream — cannot fast-forward"
+          fi
+
+      - name: Rebase branding/m42 onto master
+        id: rebase
+        if: steps.master_sync.outputs.result != 'diverged'
+        run: |
+          git checkout ${{ env.BRANDING_BRANCH }}
+          BEFORE=$(git rev-parse HEAD)
+          if git rebase origin/master; then
+            AFTER=$(git rev-parse HEAD)
+            if [ "$BEFORE" = "$AFTER" ]; then
+              echo "result=noop" >> "$GITHUB_OUTPUT"
+              echo "::notice::branding branch already on top of master"
+            else
+              echo "result=rebased" >> "$GITHUB_OUTPUT"
+              git push --force-with-lease origin ${{ env.BRANDING_BRANCH }}
+              echo "::notice::branding/m42 rebased and pushed"
+            fi
+          else
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+            git rebase --abort || true
+            echo "::warning::rebase conflict in branding/m42 — needs manual resolution"
+          fi
+
+      - name: Open issue if conflict or divergence
+        if: |
+          steps.master_sync.outputs.result == 'diverged' ||
+          steps.rebase.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          REASON="unknown"
+          if [ "${{ steps.master_sync.outputs.result }}" = "diverged" ]; then
+            REASON="master diverged from upstream — cannot fast-forward"
+          elif [ "${{ steps.rebase.outputs.result }}" = "conflict" ]; then
+            REASON="rebase conflict between branding/m42 and master"
+          fi
+          BODY=$(cat <<EOF
+          The weekly upstream sync workflow could not complete automatically.
+
+          **Reason:** $REASON
+          **New upstream commits on master:** ${{ steps.master_sync.outputs.new_commits }}
+
+          ## Manual resolution
+
+          On your local Windows machine:
+
+          \`\`\`powershell
+          cd c:\\Users\\cralv\\dev\\paperclip
+          git fetch origin
+          git fetch upstream
+          git checkout master
+          git merge --ff-only upstream/master || git reset --hard upstream/master  # if diverged
+          git push origin master
+
+          git checkout branding/m42
+          git rebase master
+          # Resolve any conflicts (git rerere helps for repeats)
+          git push --force-with-lease origin branding/m42
+          \`\`\`
+
+          Then deploy to VPS:
+
+          \`\`\`powershell
+          ssh root@72.61.6.37 "cd /opt/apps/paperclip && sudo -u cralv git fetch && sudo -u cralv git reset --hard origin/branding/m42 && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build server"
+          \`\`\`
+
+          ---
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "Upstream sync needs attention ($DATE)" \
+            --body "$BODY" \
+            --label "sync,needs-manual" || true
+
+      - name: Summary
+        run: |
+          {
+            echo "## Sync summary"
+            echo ""
+            echo "- master sync: ${{ steps.master_sync.outputs.result }}"
+            echo "- new commits on master: ${{ steps.master_sync.outputs.new_commits || '0' }}"
+            echo "- branding rebase: ${{ steps.rebase.outputs.result }}"
+          } >> "$GITHUB_STEP_SUMMARY"
