@@ -145,4 +145,28 @@ describe("ui branding", () => {
     expect(branded).toContain("Evil &lt;script&gt;&quot;&amp;");
     expect(branded).not.toContain("<script>");
   });
+
+  // Fork-local revision suffix tests
+  it("includes revision meta when PAPERCLIP_BRAND_REVISION is set", () => {
+    const branded = applyUiBranding(TEMPLATE, {
+      PAPERCLIP_BRAND_NAME: "M42 Agent",
+      PAPERCLIP_BRAND_REVISION: "7",
+    });
+    // Numeric revisions are zero-padded to 2 digits server-side
+    expect(branded).toContain('name="paperclip-instance-brand-revision"');
+    expect(branded).toContain('content="07"');
+  });
+
+  it("preserves non-numeric revision (e.g. short SHA) untouched", () => {
+    const branded = applyUiBranding(TEMPLATE, {
+      PAPERCLIP_BRAND_NAME: "M42 Agent",
+      PAPERCLIP_BRAND_REVISION: "abc123",
+    });
+    expect(branded).toContain('content="abc123"');
+  });
+
+  it("omits revision meta when PAPERCLIP_BRAND_REVISION is unset", () => {
+    const branded = applyUiBranding(TEMPLATE, { PAPERCLIP_BRAND_NAME: "M42 Agent" });
+    expect(branded).not.toContain('name="paperclip-instance-brand-revision"');
+  });
 });
