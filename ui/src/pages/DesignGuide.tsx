@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BRAND_NAME } from "@/lib/brand";
 import {
   BookOpen,
   Bot,
@@ -305,7 +306,7 @@ export function DesignGuide() {
       <div>
         <h2 className="text-xl font-bold">Design Guide</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Every component, style, and pattern used across Paperclip.
+          Every component, style, and pattern used across {BRAND_NAME}.
         </p>
       </div>
 
