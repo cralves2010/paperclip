@@ -5,12 +5,12 @@ import {
   type Agent,
 } from "@paperclipai/shared";
 import { Shield, ShieldCheck, Trash2, Users } from "lucide-react";
-import { BRAND_NAME } from "@/lib/brand";
 import { accessApi, type CompanyMember } from "@/api/access";
 import { agentsApi } from "@/api/agents";
 import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
 import { Button } from "@/components/ui/button";
+import { BRAND_NAME } from "@/lib/brand";
 import {
   Dialog,
   DialogContent,
