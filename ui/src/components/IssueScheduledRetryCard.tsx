@@ -6,6 +6,7 @@ import { formatMonitorOffset } from "@/lib/issue-monitor";
 import { formatRetryReason } from "@/lib/runRetryState";
 import type { IssueScheduledRetry } from "@paperclipai/shared";
 import { useRetryNowMutation, type RetryNowError } from "../hooks/useRetryNowMutation";
+import { BRAND_NAME } from "@/lib/brand";
 
 const MAX_TURN_CONTINUATION = "max_turns_continuation";
 
@@ -105,7 +106,7 @@ export function IssueScheduledRetryCard({
           ) : null}
           {scheduledRetry.error ? (
             <div className="mt-1 text-xs text-muted-foreground">
-              Last attempt failed: {scheduledRetry.error}. Paperclip will retry automatically.
+              Last attempt failed: {scheduledRetry.error}. {BRAND_NAME} will retry automatically.
             </div>
           ) : null}
           {isError ? (
