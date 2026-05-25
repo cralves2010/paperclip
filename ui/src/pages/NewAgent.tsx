@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/popover";
 import { Shield } from "lucide-react";
 import { cn, agentUrl } from "../lib/utils";
+import { BRAND_NAME } from "@/lib/brand";
 import { roleLabels } from "../components/agent-config-primitives";
 import {
   AgentConfigForm,
@@ -271,7 +272,7 @@ export function NewAgent() {
             <div>
               <h2 className="text-sm font-medium">Company skills</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Optional skills from the company library. Built-in Paperclip runtime skills are added automatically.
+                Optional skills from the company library. Built-in {BRAND_NAME} runtime skills are added automatically.
               </p>
             </div>
             {availableSkills.length === 0 ? (

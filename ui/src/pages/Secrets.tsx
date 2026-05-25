@@ -50,6 +50,7 @@ import {
 } from "../api/secrets";
 import { ApiError } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";
+import { BRAND_NAME, BRAND_SHORT_NAME } from "@/lib/brand";
 import { EmptyState } from "../components/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -206,13 +207,13 @@ function normalizeSecretKeyForPreview(input: string) {
 
 
 function modeLabel(managedMode: SecretManagedMode) {
-  return managedMode === "paperclip_managed" ? "Paperclip-managed" : "Linked external";
+  return managedMode === "paperclip_managed" ? `${BRAND_SHORT_NAME}-managed` : "Linked external";
 }
 
 function modeDescription(managedMode: SecretManagedMode) {
   return managedMode === "paperclip_managed"
-    ? "Paperclip owns create and rotation writes for this provider secret."
-    : "Paperclip resolves this provider reference but does not rotate the provider value.";
+    ? `${BRAND_NAME} owns create and rotation writes for this provider secret.`
+    : `${BRAND_NAME} resolves this provider reference but does not rotate the provider value.`;
 }
 
 function healthEntryForProvider(
@@ -229,7 +230,7 @@ export function getCreateProviderBlockReason(
 ) {
   if (!provider) return "Select a provider.";
   if (mode === "managed" && provider.supportsManagedValues === false) {
-    return `${provider.label} does not support Paperclip-managed secret values.`;
+    return `${provider.label} does not support ${BRAND_SHORT_NAME}-managed secret values.`;
   }
   if (mode === "external" && provider.supportsExternalReferences === false) {
     return `${provider.label} does not support linked external references.`;
@@ -702,7 +703,7 @@ export function Secrets() {
     onSuccess: (removed) => {
       pushToast({
         title: "Provider vault removed",
-        body: `${removed.displayName} was removed from Paperclip only.`,
+        body: `${removed.displayName} was removed from ${BRAND_NAME} only.`,
         tone: "info",
       });
       setRemoveVaultConfirm(null);
@@ -1165,7 +1166,7 @@ export function Secrets() {
           <DialogHeader>
             <DialogTitle>Create secret</DialogTitle>
             <DialogDescription>
-              Choose whether Paperclip should own future provider writes, or only resolve an existing
+              Choose whether {BRAND_NAME} should own future provider writes, or only resolve an existing
               provider reference at runtime.
             </DialogDescription>
           </DialogHeader>
@@ -1279,8 +1280,8 @@ export function Secrets() {
             {createMode === "managed" ? (
               <>
                 <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2 text-[11px] text-emerald-700 dark:text-emerald-300">
-                  Paperclip-managed secrets are created in the selected provider and future rotations
-                  write a new provider version through Paperclip.
+                  {BRAND_SHORT_NAME}-managed secrets are created in the selected provider and future rotations
+                  write a new provider version through {BRAND_NAME}.
                   {awsManagedPathPreview ? (
                     <div className="mt-1">
                       AWS managed path:{" "}
@@ -1317,7 +1318,7 @@ export function Secrets() {
                   className="font-mono text-xs"
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Existing provider secrets are resolve-only in Paperclip. Rotate the value in the provider,
+                  Existing provider secrets are resolve-only in {BRAND_NAME}. Rotate the value in the provider,
                   then update this reference only if the path, ARN, or version changes.
                 </p>
               </div>
@@ -1497,7 +1498,7 @@ export function Secrets() {
             </DialogTitle>
             <DialogDescription>
               {selectedSecret?.managedMode === "external_reference"
-                ? "Creates a new Paperclip metadata version that points at an existing provider secret. Paperclip does not write a new provider value."
+                ? `Creates a new ${BRAND_NAME} metadata version that points at an existing provider secret. ${BRAND_NAME} does not write a new provider value.`
                 : "Creates a new provider-backed version. Consumers pinned to latest pick up the new value on the next run."}
             </DialogDescription>
           </DialogHeader>
@@ -1540,7 +1541,7 @@ export function Secrets() {
                 className="font-mono text-xs"
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Rotate the actual value in the provider before changing this Paperclip reference.
+                Rotate the actual value in the provider before changing this {BRAND_NAME} reference.
               </p>
             </div>
           ) : (
@@ -1608,7 +1609,7 @@ export function Secrets() {
           <DialogHeader>
             <DialogTitle>Remove provider vault</DialogTitle>
             <DialogDescription>
-              Removes <strong>{removeVaultConfirm?.displayName}</strong> from Paperclip only.{" "}
+              Removes <strong>{removeVaultConfirm?.displayName}</strong> from {BRAND_NAME} only.{" "}
               {removeVaultConfirm?.provider === "aws_secrets_manager"
                 ? "This does not delete the remote AWS Secrets Manager vault, secrets, or any AWS data."
                 : "This does not delete any remote provider data."}{" "}
@@ -1623,7 +1624,7 @@ export function Secrets() {
               disabled={removeVaultMutation.isPending}
             >
               {removeVaultMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-              Remove from Paperclip
+              Remove from {BRAND_NAME}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1644,7 +1645,7 @@ function SecretsHowToUse() {
           <span className="font-medium text-foreground">Secret</span>, and select the stored secret version.
         </p>
         <p>
-          Paperclip resolves the value server-side when the run starts and injects it as that env var. Project env
+          {BRAND_NAME} resolves the value server-side when the run starts and injects it as that env var. Project env
           applies to every issue in the project and overrides agent env on matching keys.
         </p>
       </div>
@@ -2347,7 +2348,7 @@ function SecretDetailsTab({
         </div>
       ) : null}
       <div className="col-span-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-amber-700 dark:text-amber-300">
-        {modeDescription(secret.managedMode)} Paperclip never re-displays stored values.
+        {modeDescription(secret.managedMode)} {BRAND_NAME} never re-displays stored values.
       </div>
     </dl>
   );
