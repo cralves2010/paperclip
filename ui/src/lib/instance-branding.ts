@@ -22,3 +22,11 @@ export function getInstanceBrandShortName(): string | null {
   if (!isInstanceBrandingEnabled()) return null;
   return readMetaContent("paperclip-instance-brand-short-name") ?? getInstanceBrandName();
 }
+
+// Optional fork-local sequential revision (e.g. "07"). Rendered as a suffix
+// next to the upstream semver in version chips so operators can tell which
+// branding/m42 commit is deployed without reading the upstream "version" field.
+export function getInstanceBrandRevision(): string | null {
+  if (!isInstanceBrandingEnabled()) return null;
+  return readMetaContent("paperclip-instance-brand-revision");
+}
