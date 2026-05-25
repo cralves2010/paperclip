@@ -6,6 +6,7 @@ import { authApi } from "@/api/auth";
 import { healthApi } from "@/api/health";
 import { queryKeys } from "@/lib/queryKeys";
 import { BootstrapPendingPage } from "@/components/BootstrapPendingPage";
+import { BRAND_NAME } from "@/lib/brand";
 
 function NoBoardAccessPage() {
   return (
@@ -14,7 +15,7 @@ function NoBoardAccessPage() {
         <h1 className="text-xl font-semibold">No company access</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           This account is signed in, but it does not have an active company membership or instance-admin access on
-          this Paperclip instance.
+          this {BRAND_NAME} instance.
         </p>
         <p className="mt-2 text-sm text-muted-foreground">
           Use a company invite or sign in with an account that already belongs to this org.
