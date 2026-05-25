@@ -7,6 +7,7 @@ import { getRememberedInvitePath } from "../lib/invite-memory";
 import { Button } from "@/components/ui/button";
 import { AsciiArtAnimation } from "@/components/AsciiArtAnimation";
 import { Sparkles } from "lucide-react";
+import { BRAND_NAME } from "@/lib/brand";
 
 type AuthMode = "sign_in" | "sign_up";
 
@@ -80,11 +81,11 @@ export function AuthPage() {
         <div className="w-full max-w-md mx-auto my-auto px-8 py-12">
           <div className="flex items-center gap-2 mb-8">
             <Sparkles className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Paperclip</span>
+            <span className="text-sm font-medium">{BRAND_NAME}</span>
           </div>
 
           <h1 className="text-xl font-semibold">
-            {mode === "sign_in" ? "Sign in to Paperclip" : "Create your Paperclip account"}
+            {mode === "sign_in" ? `Sign in to ${BRAND_NAME}` : `Create your ${BRAND_NAME} account`}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "sign_in"
