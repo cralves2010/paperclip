@@ -10,6 +10,7 @@ import type {
 import type { Agent, IssueComment } from "@paperclipai/shared";
 import type { ActiveRunForIssue, LiveRunForIssue } from "../api/heartbeats";
 import { formatAssigneeUserLabel } from "./assignees";
+import { BRAND_NAME } from "./brand";
 import {
   buildIssueThreadInteractionSummary,
   type IssueThreadInteraction,
@@ -362,7 +363,7 @@ function authorNameForComment(
 ) {
   const authorAgentId = effectiveCommentAuthorAgentId(comment);
   if (authorAgentId) {
-    return agentMap?.get(authorAgentId)?.name ?? (options?.isSystemNotice ? "Paperclip" : authorAgentId.slice(0, 8));
+    return agentMap?.get(authorAgentId)?.name ?? (options?.isSystemNotice ? BRAND_NAME : authorAgentId.slice(0, 8));
   }
   const authorUserId = comment.authorUserId ?? null;
   if (!authorUserId) return "You";

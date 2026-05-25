@@ -20,6 +20,7 @@ import {
   deriveRecoveryDisplayState,
   type RecoveryDisplayState,
 } from "@/lib/recovery-display";
+import { BRAND_NAME } from "@/lib/brand";
 
 export type RecoveryCardCardState = RecoveryDisplayState;
 export const deriveRecoveryCardState = deriveRecoveryDisplayState;
@@ -53,11 +54,11 @@ const KIND_LABEL: Record<IssueRecoveryActionKind, string> = {
 const KIND_HEADLINE: Record<IssueRecoveryActionKind, string> = {
   missing_disposition: "This issue's run finished, but no next step was chosen.",
   stranded_assigned_issue:
-    "Paperclip retried this issue's last run and it still has no live execution path.",
+    `${BRAND_NAME} retried this issue's last run and it still has no live execution path.`,
   active_run_watchdog:
     "The active run has been silent. Recovery is observing without interrupting it.",
   issue_graph_liveness:
-    "Paperclip detected this issue lost a live action path. A recovery owner needs to act.",
+    `${BRAND_NAME} detected this issue lost a live action path. A recovery owner needs to act.`,
 };
 
 const STATE_TONE: Record<RecoveryCardCardState, {

@@ -1,12 +1,20 @@
 import type { ActivityEvent, Issue, SuccessfulRunHandoffState } from "@paperclipai/shared";
+import { BRAND_NAME } from "./brand";
 
 export const SUCCESSFUL_RUN_HANDOFF_REQUIRED_ACTION = "issue.successful_run_handoff_required";
 export const SUCCESSFUL_RUN_HANDOFF_RESOLVED_ACTION = "issue.successful_run_handoff_resolved";
 export const SUCCESSFUL_RUN_HANDOFF_ESCALATED_ACTION = "issue.successful_run_handoff_escalated";
-export const SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY =
+// Display bodies use the brand name. Legacy literals are kept in the matcher
+// below so messages written by past upstream runs still detect as handoff
+// notices after rebrand.
+const LEGACY_REQUIRED_NOTICE_BODY =
   "Paperclip needs a disposition before this issue can continue.";
-export const SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY =
+const LEGACY_EXHAUSTED_NOTICE_BODY =
   "Paperclip could not resolve this issue's missing disposition automatically. The issue is blocked on a recovery owner.";
+export const SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY =
+  `${BRAND_NAME} needs a disposition before this issue can continue.`;
+export const SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY =
+  `${BRAND_NAME} could not resolve this issue's missing disposition automatically. The issue is blocked on a recovery owner.`;
 
 export function isSuccessfulRunHandoffActivity(action: string) {
   return action === SUCCESSFUL_RUN_HANDOFF_REQUIRED_ACTION
@@ -60,14 +68,24 @@ export function successfulRunHandoffFromActivity(event: ActivityEvent): Successf
 export function isSuccessfulRunHandoffComment(text: string) {
   const trimmed = text.trim();
   return trimmed === SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY
+    || trimmed === LEGACY_REQUIRED_NOTICE_BODY
     || /^##\s+(This issue still needs a next step|Run finished without a next step|Successful run missing issue disposition)/i.test(trimmed)
     || isSuccessfulRunHandoffEscalationComment(trimmed);
 }
 
+// Matches both the legacy "Paperclip exhausted..." literal (from upstream-
+// generated activity rows) and a brand-aware variant, so rebranded deployments
+// still surface historical escalations correctly.
+const BRAND_EXHAUSTED_PATTERN = new RegExp(
+  `^(?:Paperclip|${BRAND_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}) exhausted the bounded successful-run handoff correction\\b`,
+  "i",
+);
+
 export function isSuccessfulRunHandoffEscalationComment(text: string) {
   const trimmed = text.trim();
   return trimmed === SUCCESSFUL_RUN_HANDOFF_EXHAUSTED_NOTICE_BODY
-    || /^Paperclip exhausted the bounded successful-run handoff correction\b/i.test(trimmed);
+    || trimmed === LEGACY_EXHAUSTED_NOTICE_BODY
+    || BRAND_EXHAUSTED_PATTERN.test(trimmed);
 }
 
 export function successfulRunHandoffActivityTone(action: string) {
