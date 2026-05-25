@@ -366,7 +366,7 @@ export async function createApp(
           .status(200)
           .set("Content-Type", "text/html")
           .set("Cache-Control", "no-cache")
-          .end(indexHtml);
+          .end(readBrandedStaticIndexHtml(uiDist));
       });
       // SPA fallback. Only for non-asset routes — if the browser asks for
       // /assets/something.js that doesn't exist, we must NOT serve the HTML
