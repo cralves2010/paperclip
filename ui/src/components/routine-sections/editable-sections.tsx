@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { RadioCardGroup } from "@/components/ui/radio-card";
 import { cn } from "@/lib/utils";
+import { BRAND_NAME } from "@/lib/brand";
 import { nextCronFires, previewFirePolicies } from "../../lib/cron-fires";
 import { timeAgo } from "../../lib/timeAgo";
 import { EmptyState } from "../EmptyState";
@@ -554,7 +555,7 @@ export function SecretsSection() {
           <div>
             <p className="font-medium">{secretMessage.title}</p>
             <p className="text-xs text-muted-foreground">
-              Save this now. Paperclip will not show the secret value again.
+              Save this now. {BRAND_NAME} will not show the secret value again.
             </p>
           </div>
           <div className="space-y-3">

@@ -12,6 +12,7 @@ import {
   isCodexLocalFastModeSupported,
   isCodexLocalManualModel,
 } from "@paperclipai/adapter-codex-local";
+import { BRAND_NAME } from "@/lib/brand";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
@@ -45,7 +46,7 @@ export function CodexLocalConfigFields({
     ? "Fast mode will be passed through for this manual model. If Codex rejects it, turn the toggle off."
     : fastModeSupported
       ? "Fast mode consumes credits/tokens much faster than standard Codex runs."
-      : `Fast mode currently only works on ${supportedModelsLabel} or manual model IDs. Paperclip will ignore this toggle until the model is switched.`;
+      : `Fast mode currently only works on ${supportedModelsLabel} or manual model IDs. ${BRAND_NAME} will ignore this toggle until the model is switched.`;
 
   return (
     <>
