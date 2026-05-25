@@ -19,7 +19,7 @@ import { useTheme } from "../context/ThemeContext";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "../lib/utils";
-import { BRAND_NAME, BRAND_SHORT_NAME } from "@/lib/brand";
+import { BRAND_NAME, BRAND_SHORT_NAME, formatBrandedVersion } from "@/lib/brand";
 
 const PROFILE_SETTINGS_PATH = "/instance/settings/profile";
 const DOCS_URL = "https://docs.paperclip.ing/";
@@ -181,7 +181,7 @@ export function SidebarAccountMenu({
                 </div>
                 <p className="truncate text-sm text-muted-foreground">{secondaryLabel}</p>
                 {version ? (
-                  <p className="mt-1 text-xs text-muted-foreground">{BRAND_SHORT_NAME} v{version}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{BRAND_SHORT_NAME} {formatBrandedVersion(version)}</p>
                 ) : null}
               </div>
             </div>

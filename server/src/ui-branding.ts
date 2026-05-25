@@ -22,10 +22,16 @@ export type WorktreeUiBranding = {
 // Separated from WorktreeUiBranding because it has different semantics:
 // worktree branding tags a dev worktree; instance branding renames the product
 // for a deployed instance.
+//
+// `revision` is an optional fork-local sequential counter (e.g. "07") rendered
+// as a suffix next to the upstream semver in account/version chips. It is
+// computed at deploy time by counting commits between the fork's tracking base
+// and HEAD, so the upstream semver value is never modified.
 export type InstanceUiBranding = {
   enabled: boolean;
   name: string | null;
   shortName: string | null;
+  revision: string | null;
 };
 
 function isTruthyEnvValue(value: string | undefined): boolean {
@@ -207,12 +213,26 @@ export function isInstanceUiBrandingEnabled(env: NodeJS.ProcessEnv = process.env
 
 export function getInstanceUiBranding(env: NodeJS.ProcessEnv = process.env): InstanceUiBranding {
   if (!isInstanceUiBrandingEnabled(env)) {
-    return { enabled: false, name: null, shortName: null };
+    return { enabled: false, name: null, shortName: null, revision: null };
   }
   const name = nonEmpty(env.PAPERCLIP_BRAND_NAME);
   const shortName = nonEmpty(env.PAPERCLIP_BRAND_SHORT_NAME) ?? name;
-  if (!name) return { enabled: false, name: null, shortName: null };
-  return { enabled: true, name, shortName };
+  // Revision is purely additive — it never replaces the upstream semver, it
+  // only renders alongside it as a fork-local sequence number. Padding stays
+  // server-side so the UI can render it verbatim.
+  const revision = normalizeRevision(env.PAPERCLIP_BRAND_REVISION);
+  if (!name) return { enabled: false, name: null, shortName: null, revision: null };
+  return { enabled: true, name, shortName, revision };
+}
+
+function normalizeRevision(value: string | undefined): string | null {
+  const raw = nonEmpty(value);
+  if (!raw) return null;
+  // Accept numeric strings (e.g. "5", "07"); zero-pad to at least 2 digits so
+  // sidebar chips line up. Non-numeric values (e.g. short SHAs) pass through
+  // untouched.
+  if (/^\d+$/.test(raw)) return raw.padStart(2, "0");
+  return raw;
 }
 
 export function renderInstanceBrandingMeta(branding: InstanceUiBranding): string {
@@ -224,6 +244,11 @@ export function renderInstanceBrandingMeta(branding: InstanceUiBranding): string
   if (branding.shortName) {
     parts.push(
       `<meta name="paperclip-instance-brand-short-name" content="${escapeHtmlAttribute(branding.shortName)}" />`,
+    );
+  }
+  if (branding.revision) {
+    parts.push(
+      `<meta name="paperclip-instance-brand-revision" content="${escapeHtmlAttribute(branding.revision)}" />`,
     );
   }
   return parts.join("\n");
