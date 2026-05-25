@@ -148,6 +148,98 @@ jobs:
             --body "$BODY" \
             --label "sync,needs-manual" || true
 
+      # Detect new stable upstream tag (vYYYY.MDD.0). When such a tag appears
+      # and includes our current origin/master (i.e. switching to it would not
+      # regress the schema), open a "ready to switch" issue. State is kept
+      # implicitly via the issue title — a duplicate title is a no-op.
+      - name: Detect stable upstream tag
+        id: tag_detect
+        run: |
+          # Filter: stable calver tags only (no canary, no 0.x.x)
+          LATEST_TAG=$(git ls-remote --tags --refs --sort=-v:refname upstream \
+              | awk '{print $2}' \
+              | sed 's|refs/tags/||' \
+              | grep -E '^v202[6-9]\.[0-9]+\.[0-9]+$' \
+              | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "result=none" >> "$GITHUB_OUTPUT"
+            echo "::notice::no stable upstream tag matched the calver pattern"
+            exit 0
+          fi
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+          # Resolve tag SHA (peel annotated tags to the commit they point at)
+          git fetch upstream "refs/tags/${LATEST_TAG}:refs/tags/${LATEST_TAG}" --no-tags || true
+          TAG_SHA=$(git rev-parse "${LATEST_TAG}^{commit}" 2>/dev/null || true)
+          if [ -z "$TAG_SHA" ]; then
+            echo "result=unresolved" >> "$GITHUB_OUTPUT"
+            echo "::warning::could not resolve SHA for tag $LATEST_TAG"
+            exit 0
+          fi
+          echo "tag_sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
+
+          # SAFE-TO-SWITCH check: is origin/master an ancestor of the tag?
+          # If yes, the tag includes everything currently in our master, so
+          # switching the rebase base from master to this tag would not regress.
+          MASTER_SHA=$(git rev-parse origin/master)
+          if git merge-base --is-ancestor "$MASTER_SHA" "$TAG_SHA"; then
+            echo "result=safe_to_switch" >> "$GITHUB_OUTPUT"
+            echo "::notice::tag $LATEST_TAG is at or ahead of origin/master — safe to switch"
+          else
+            BEHIND=$(git rev-list --count "${TAG_SHA}..${MASTER_SHA}")
+            echo "result=master_ahead" >> "$GITHUB_OUTPUT"
+            echo "master_ahead_by=$BEHIND" >> "$GITHUB_OUTPUT"
+            echo "::notice::tag $LATEST_TAG is $BEHIND commits behind origin/master — wait for next tag"
+          fi
+
+      - name: Open issue when tag becomes safe to switch
+        if: steps.tag_detect.outputs.result == 'safe_to_switch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag_detect.outputs.latest_tag }}
+        run: |
+          # Dedup by title: don't open a second issue for the same tag
+          TITLE="Upstream stable tag $TAG is safe to switch to"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::issue already open for $TAG (#$EXISTING)"
+            exit 0
+          fi
+          BODY=$(cat <<EOF
+          A new stable upstream tag is available and **contains everything that is currently in our \`master\`**.
+          This means switching from master-based sync to tag-based sync would NOT regress the schema or revert deployed code.
+
+          - **Tag:** \`$TAG\`
+          - **Upstream:** ${{ env.UPSTREAM_REPO }}
+          - **Detected on:** $(date -u +%Y-%m-%d)
+
+          ## How to switch (only when you decide to)
+
+          1. Edit \`.github/workflows/sync-upstream.yml\`:
+             - Replace \`git rebase origin/master\` with \`git rebase $TAG\`
+             - (Optional) Replace \`fetch upstream master\` with \`fetch upstream master --tags\` and pin the rebase base to a workflow-input tag for explicit control.
+          2. Commit the workflow change to \`branding/m42\`.
+          3. Run the workflow manually (Actions tab → Sync from upstream → Run workflow) and verify branding rebase succeeds.
+          4. Deploy to VPS:
+             \`\`\`powershell
+             ssh root@72.61.6.37 "cd /opt/apps/paperclip && sudo -u cralv git fetch && sudo -u cralv git reset --hard origin/branding/m42 && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build server"
+             \`\`\`
+          5. Smoke-test the production app.
+
+          ## Why this matters
+
+          Upstream master gets ~25 commits/week, schema evolves continuously, and migrations can be additive or breaking. Tagged releases are the upstream-tested checkpoints (~1/week). Switching to tag-based sync gives us a stable cadence with less surprise. We waited for this moment because rolling back from a master snapshot to an older tag would regress the schema. This tag clears that risk.
+
+          ---
+          Triggered by run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "upstream-tag,ready-to-switch" || true
+
       - name: Summary
         run: |
           {
@@ -156,4 +248,9 @@ jobs:
             echo "- master sync: ${{ steps.master_sync.outputs.result }}"
             echo "- new commits on master: ${{ steps.master_sync.outputs.new_commits || '0' }}"
             echo "- branding rebase: ${{ steps.rebase.outputs.result }}"
+            echo "- latest stable tag: ${{ steps.tag_detect.outputs.latest_tag || 'n/a' }}"
+            echo "- tag relative to master: ${{ steps.tag_detect.outputs.result }}"
+            if [ "${{ steps.tag_detect.outputs.result }}" = "master_ahead" ]; then
+              echo "- master ahead of tag by: ${{ steps.tag_detect.outputs.master_ahead_by }} commits"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
