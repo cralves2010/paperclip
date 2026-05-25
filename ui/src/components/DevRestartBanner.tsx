@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, RotateCcw, TimerReset } from "lucide-react";
 import { healthApi, type DevServerHealthStatus } from "../api/health";
+import { BRAND_NAME } from "@/lib/brand";
 
 const RESTART_PENDING_RESET_MS = 30_000;
 
@@ -51,8 +52,8 @@ export function DevRestartBanner({ devServer }: { devServer?: DevServerHealthSta
   async function requestRestartNow() {
     const warning =
       currentDevServer.activeRunCount > 0
-        ? `Restart Paperclip now? This may interrupt ${activeRunLabel}.`
-        : "Restart Paperclip now?";
+        ? `Restart ${BRAND_NAME} now? This may interrupt ${activeRunLabel}.`
+        : `Restart ${BRAND_NAME} now?`;
     if (!window.confirm(warning)) return;
 
     setRestartPending(true);
