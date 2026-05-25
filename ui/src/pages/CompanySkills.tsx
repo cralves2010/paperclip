@@ -91,6 +91,7 @@ import {
   Users,
   XOctagon,
 } from "lucide-react";
+import { BRAND_NAME } from "@/lib/brand";
 
 type SkillTreeNode = {
   name: string;
@@ -197,7 +198,7 @@ function sourceMeta(sourceBadge: CompanySkillSourceBadge, sourceLabel: string | 
     case "local":
       return { icon: Folder, label: sourceLabel ?? "Folder", managedLabel: "Folder managed" };
     case "paperclip":
-      return { icon: Paperclip, label: sourceLabel ?? "Paperclip", managedLabel: "Paperclip managed" };
+      return { icon: Paperclip, label: sourceLabel ?? BRAND_NAME, managedLabel: `${BRAND_NAME} managed` };
     default:
       return { icon: Boxes, label: sourceLabel ?? "Catalog", managedLabel: "Catalog managed" };
   }
@@ -1901,7 +1902,7 @@ export function CompanySkills() {
       pushToast({
         tone: "success",
         title: "Skill created",
-        body: `${skill.name} is now editable in the Paperclip workspace.`,
+        body: `${skill.name} is now editable in the ${BRAND_NAME} workspace.`,
       });
     },
     onError: (error) => {

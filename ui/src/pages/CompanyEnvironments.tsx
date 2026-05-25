@@ -8,6 +8,7 @@ import {
   type JsonSchema,
 } from "@paperclipai/shared";
 import { Check, Settings } from "lucide-react";
+import { BRAND_NAME } from "@/lib/brand";
 import { environmentsApi } from "@/api/environments";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { secretsApi } from "@/api/secrets";
@@ -521,7 +522,7 @@ export function CompanyEnvironments() {
                           })()}
                         </div>
                       ) : (
-                        <div className="text-xs text-muted-foreground">Runs on this Paperclip host.</div>
+                        <div className="text-xs text-muted-foreground">Runs on this {BRAND_NAME} host.</div>
                       )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -654,7 +655,7 @@ export function CompanyEnvironments() {
                     onChange={(e) => setEnvironmentForm((current) => ({ ...current, sshUsername: e.target.value }))}
                   />
                 </Field>
-                <Field label="Remote workspace path" hint="Absolute path that Paperclip will verify during SSH connection tests.">
+                <Field label="Remote workspace path" hint={`Absolute path that ${BRAND_NAME} will verify during SSH connection tests.`}>
                   <input
                     className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
                     type="text"
