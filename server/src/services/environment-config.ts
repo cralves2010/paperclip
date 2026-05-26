@@ -559,14 +559,25 @@ export async function resolveEnvironmentDriverConfigForRuntime(
   db: Db,
   companyId: string,
   environment: Pick<Environment, "driver" | "config"> & Partial<Pick<Environment, "id">>,
-  context?: { issueId?: string | null; heartbeatRunId?: string | null },
+  context?: {
+    issueId?: string | null;
+    heartbeatRunId?: string | null;
+    // When true, allow resolution against an unsaved environment (no id). Used
+    // for draft "Test draft" probes where the user is configuring the binding
+    // and the environment record does not exist yet. Binding existence check
+    // on the secret is skipped because the binding would only be created at
+    // save time. Audit access events still fire with a sentinel consumerId.
+    allowUnsavedDraft?: boolean;
+  },
 ): Promise<ParsedEnvironmentConfig> {
   const parsed = parseEnvironmentDriverConfig(environment);
   const secrets = secretService(db);
   const environmentId = environment.id;
-  if (parsed.driver === "ssh" && parsed.config.privateKeySecretRef && !environmentId) {
+  const allowUnsavedDraft = context?.allowUnsavedDraft ?? false;
+  if (parsed.driver === "ssh" && parsed.config.privateKeySecretRef && !environmentId && !allowUnsavedDraft) {
     throw unprocessable("Runtime secret resolution requires an environment id");
   }
+  const consumerId = environmentId ?? "unsaved-environment-draft";
 
   if (parsed.driver === "ssh" && parsed.config.privateKeySecretRef) {
     return {
@@ -579,12 +590,13 @@ export async function resolveEnvironmentDriverConfigForRuntime(
           parsed.config.privateKeySecretRef.version ?? "latest",
           {
             consumerType: "environment",
-            consumerId: environmentId!,
+            consumerId,
             actorType: "system",
             actorId: null,
             issueId: context?.issueId ?? null,
             heartbeatRunId: context?.heartbeatRunId ?? null,
             configPath: "privateKeySecretRef",
+            skipBindingCheck: allowUnsavedDraft,
           },
         ),
       },
@@ -600,7 +612,7 @@ export async function resolveEnvironmentDriverConfigForRuntime(
         config: parsed.config as Record<string, unknown>,
         schema: await getSandboxProviderConfigSchema(db, parsed.config.provider),
         context: {
-          consumerId: environmentId!,
+          consumerId,
           issueId: context?.issueId ?? null,
           heartbeatRunId: context?.heartbeatRunId ?? null,
         },
