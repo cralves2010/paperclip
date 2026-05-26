@@ -53,6 +53,8 @@ RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/plugin-sdk build
 RUN pnpm --filter @paperclipai/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
+RUN pnpm --filter @m42/plugin-agent-outputs build
+RUN test -f packages/plugins/plugin-agent-outputs/dist/manifest.js || (echo "ERROR: plugin-agent-outputs build output missing" && exit 1)
 
 FROM base AS production
 ARG USER_UID=1000
