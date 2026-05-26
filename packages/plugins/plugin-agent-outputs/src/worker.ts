@@ -232,9 +232,55 @@ function toDetail(raw: RawUnifiedRow, body: string | null, contentUrl: string | 
   };
 }
 
+function readCompanyId(params: Record<string, unknown>): string {
+  const value = params.companyId;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("companyId is required");
+  }
+  return value;
+}
+
+function buildFiltersFromParams(params: Record<string, unknown>): OutputFilters {
+  return {
+    companyId: readCompanyId(params),
+    projectId: stringField(params.projectId ?? params.project),
+    from: stringField(params.from),
+    to: stringField(params.to),
+    kinds: parseKindsParam(params.kind ?? params.kinds),
+    agentId: stringField(params.agentId ?? params.agent),
+    mimeGroup: parseMimeGroup(params.mime ?? params.mimeGroup),
+    search: stringField(params.q ?? params.search),
+    cursor: stringField(params.cursor),
+    limit: intField(params.limit),
+  };
+}
+
 const plugin = definePlugin({
   async setup(ctx) {
     activeContext = ctx;
+
+    // UI bridge handlers — invoked by usePluginData() hooks in the React UI.
+    ctx.data.register("list", async (params) => {
+      return listOutputs(ctx, buildFiltersFromParams(params));
+    });
+
+    ctx.data.register("detail", async (params) => {
+      const companyId = readCompanyId(params);
+      const kindRaw = stringField(params.kind);
+      const id = stringField(params.id);
+      if (!kindRaw || !VALID_KINDS.includes(kindRaw as OutputKind)) {
+        throw new Error("invalid kind");
+      }
+      if (!id) throw new Error("missing id");
+      const detail = await fetchDetail(ctx, companyId, kindRaw as OutputKind, id);
+      if (!detail) throw new Error("not found");
+      return detail;
+    });
+
+    ctx.data.register("filter-options", async (params) => {
+      return listFilterOptions(ctx, readCompanyId(params));
+    });
+
     ctx.logger.info("Agent Outputs plugin setup complete");
   },
 
