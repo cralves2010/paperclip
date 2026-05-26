@@ -119,7 +119,7 @@ describe("plugin database SQL validation", () => {
   it("allows whitelisted runtime reads but rejects public writes", () => {
     expect(() =>
       validatePluginRuntimeQuery(
-        "SELECT r.id FROM plugin_test.rows r JOIN public.issues i ON i.id = r.issue_id",
+        "SELECT r.id FROM plugin_test.rows r JOIN public.issues i ON i.id = r.issue_id WHERE i.company_id = $1",
         "plugin_test",
         ["issues"],
       )
@@ -127,6 +127,64 @@ describe("plugin database SQL validation", () => {
     expect(() =>
       validatePluginRuntimeExecute("UPDATE public.issues SET title = $1", "plugin_test")
     ).toThrow(/namespace/i);
+  });
+
+  describe("company_id tenant isolation in runtime queries", () => {
+    it("rejects a runtime query that touches public tables without a company_id filter", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT id FROM public.documents",
+          "plugin_test",
+          ["documents"],
+        )
+      ).toThrow(/company_id/i);
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT d.id FROM public.documents d JOIN public.issues i ON i.id = d.id",
+          "plugin_test",
+          ["documents", "issues"],
+        )
+      ).toThrow(/company_id/i);
+    });
+
+    it("accepts a runtime query whose company_id filter lives on a joined public table", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT d.id FROM public.documents d JOIN public.issues i ON i.id = d.id WHERE i.company_id = $1",
+          "plugin_test",
+          ["documents", "issues"],
+        )
+      ).not.toThrow();
+    });
+
+    it("accepts a parameterized company_id IN clause for multi-tenant queries", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT id FROM public.documents WHERE company_id IN ($1, $2)",
+          "plugin_test",
+          ["documents"],
+        )
+      ).not.toThrow();
+    });
+
+    it("does not require company_id when the query only touches the plugin namespace", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT id FROM plugin_test.rows",
+          "plugin_test",
+        )
+      ).not.toThrow();
+    });
+
+    it("rejects a query that names company_id without binding it to a parameter", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT company_id, id FROM public.documents",
+          "plugin_test",
+          ["documents"],
+        )
+      ).toThrow(/company_id/i);
+    });
   });
 
   it("targets anonymous DO blocks without rejecting do-prefixed aliases", () => {
@@ -139,6 +197,102 @@ describe("plugin database SQL validation", () => {
     expect(() =>
       validatePluginMigrationStatement("DO $$ BEGIN END $$;", "plugin_test")
     ).toThrow(/disallowed/i);
+  });
+
+  describe("agent-outputs plugin: representative SQL shapes pass the validator", () => {
+    const AGENT_OUTPUTS_TABLES = [
+      "companies", "projects", "agents", "issues",
+      "issue_documents", "issue_comments", "issue_attachments",
+      "documents", "assets", "issue_thread_interactions",
+    ] as const;
+
+    it("document index query passes", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT d.id::text FROM public.documents d JOIN public.issue_documents idoc ON idoc.document_id = d.id JOIN public.issues i ON i.id = idoc.issue_id LEFT JOIN public.projects p ON p.id = i.project_id LEFT JOIN public.agents ag ON ag.id = d.created_by_agent_id WHERE d.company_id = $1 AND d.created_by_agent_id IS NOT NULL ORDER BY d.created_at DESC LIMIT $2",
+          "plugin_agent_outputs",
+          AGENT_OUTPUTS_TABLES as never,
+        )
+      ).not.toThrow();
+    });
+
+    it("comment index query passes", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT ic.id::text FROM public.issue_comments ic JOIN public.issues i ON i.id = ic.issue_id LEFT JOIN public.projects p ON p.id = i.project_id LEFT JOIN public.agents ag ON ag.id = ic.author_agent_id WHERE ic.company_id = $1 AND ic.author_agent_id IS NOT NULL ORDER BY ic.created_at DESC LIMIT $2",
+          "plugin_agent_outputs",
+          AGENT_OUTPUTS_TABLES as never,
+        )
+      ).not.toThrow();
+    });
+
+    it("asset index query passes", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT att.id::text FROM public.issue_attachments att JOIN public.assets a ON a.id = att.asset_id JOIN public.issues i ON i.id = att.issue_id LEFT JOIN public.projects p ON p.id = i.project_id LEFT JOIN public.agents ag ON ag.id = a.created_by_agent_id WHERE att.company_id = $1 AND a.created_by_agent_id IS NOT NULL ORDER BY a.created_at DESC LIMIT $2",
+          "plugin_agent_outputs",
+          AGENT_OUTPUTS_TABLES as never,
+        )
+      ).not.toThrow();
+    });
+
+    it("interaction index query passes", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT iti.id::text FROM public.issue_thread_interactions iti JOIN public.issues i ON i.id = iti.issue_id LEFT JOIN public.projects p ON p.id = i.project_id LEFT JOIN public.agents ag ON ag.id = iti.created_by_agent_id WHERE iti.company_id = $1 AND iti.created_by_agent_id IS NOT NULL ORDER BY iti.created_at DESC LIMIT $2",
+          "plugin_agent_outputs",
+          AGENT_OUTPUTS_TABLES as never,
+        )
+      ).not.toThrow();
+    });
+
+    it("rejects the same shape stripped of the company_id filter", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT id FROM public.documents WHERE created_by_agent_id IS NOT NULL",
+          "plugin_agent_outputs",
+          AGENT_OUTPUTS_TABLES as never,
+        )
+      ).toThrow(/company_id/i);
+    });
+  });
+
+  describe("agent-outputs allowlist (documents, assets, attachments, interactions)", () => {
+    it.each([
+      ["documents", "SELECT id FROM public.documents WHERE company_id = $1"],
+      ["assets", "SELECT id FROM public.assets WHERE company_id = $1"],
+      ["issue_attachments", "SELECT id FROM public.issue_attachments WHERE company_id = $1"],
+      ["issue_thread_interactions", "SELECT id FROM public.issue_thread_interactions WHERE company_id = $1"],
+    ])("allows %s when declared in coreReadTables", (table, query) => {
+      expect(() =>
+        validatePluginRuntimeQuery(query, "plugin_test", [table as never])
+      ).not.toThrow();
+    });
+
+    it("still rejects writes against the newly-allowlisted tables", () => {
+      expect(() =>
+        validatePluginRuntimeExecute(
+          "UPDATE public.documents SET latest_body = $1 WHERE id = $2",
+          "plugin_test",
+        )
+      ).toThrow(/namespace/i);
+      expect(() =>
+        validatePluginRuntimeExecute(
+          "DELETE FROM public.assets WHERE id = $1",
+          "plugin_test",
+        )
+      ).toThrow(/namespace/i);
+    });
+
+    it("rejects document_revisions (deliberately excluded from allowlist)", () => {
+      expect(() =>
+        validatePluginRuntimeQuery(
+          "SELECT id FROM public.document_revisions WHERE company_id = $1",
+          "plugin_test",
+          ["documents", "assets", "issue_attachments", "issue_thread_interactions"],
+        )
+      ).toThrow(/document_revisions/i);
+    });
   });
 });
 
