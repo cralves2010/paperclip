@@ -56,12 +56,21 @@ const sshEnvironmentConfigSchema = z.object({
 }).strict();
 
 const sshEnvironmentConfigProbeSchema = sshEnvironmentConfigSchema.extend({
+  // SSH private keys must end with a trailing newline — OpenSSH rejects
+  // otherwise-valid keys with "error in libcrypto / Permission denied
+  // (publickey)" if the final \n is missing. Do NOT .trim() the value here;
+  // drop empty/whitespace-only inputs explicitly and append the trailing
+  // newline so pasted keys (where browsers often strip the final \n)
+  // still authenticate.
   privateKey: z
     .string()
-    .trim()
     .optional()
     .nullable()
-    .transform((value) => (value && value.length > 0 ? value : null)),
+    .transform((value) => {
+      if (!value) return null;
+      if (value.trim().length === 0) return null;
+      return value.endsWith("\n") ? value : value + "\n";
+    }),
 }).strict();
 
 const sshEnvironmentConfigPersistenceSchema = sshEnvironmentConfigProbeSchema;
