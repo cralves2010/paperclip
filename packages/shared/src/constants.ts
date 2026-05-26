@@ -845,6 +845,10 @@ export const PLUGIN_DATABASE_CORE_READ_TABLES = [
   "approvals",
   "issue_approvals",
   "budget_incidents",
+  "documents",
+  "assets",
+  "issue_attachments",
+  "issue_thread_interactions",
 ] as const;
 export type PluginDatabaseCoreReadTable = (typeof PLUGIN_DATABASE_CORE_READ_TABLES)[number];
 
