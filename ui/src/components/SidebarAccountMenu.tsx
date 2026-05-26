@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  BookOpen,
   LogOut,
   Megaphone,
   type LucideIcon,
@@ -17,10 +16,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
-import { BRAND_NAME, BRAND_SHORT_NAME, formatBrandedVersion } from "@/lib/brand";
+import { BRAND_SHORT_NAME, formatBrandedVersion } from "@/lib/brand";
 
 const PROFILE_SETTINGS_PATH = "/company/settings/instance/profile";
-const DOCS_URL = "https://docs.paperclip.ing/";
 const FEEDBACK_URL = "https://paperclip.ing/feedback";
 
 interface SidebarAccountMenuProps {
@@ -197,14 +195,6 @@ export function SidebarAccountMenu({
                 icon={UserRoundPen}
                 href={PROFILE_SETTINGS_PATH}
                 onClick={closeNavigationChrome}
-              />
-              <MenuAction
-                label="Documentation"
-                description={`Open ${BRAND_NAME} docs in a new tab.`}
-                icon={BookOpen}
-                href={DOCS_URL}
-                external
-                onClick={() => setOpen(false)}
               />
               <MenuAction
                 label="Feedback"
