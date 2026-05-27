@@ -59,32 +59,49 @@ function kindVariant(kind: OutputKind): StatusBadgeVariant {
 // SidebarLink
 // ---------------------------------------------------------------------------
 
+// Lucide FolderOpen — inline SVG so the plugin bundle doesn't pull lucide-react.
+// Stroke + viewBox match every other host sidebar icon (h-4 w-4 in Tailwind).
+function FolderOpenIcon(): ReactNode {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden="true"
+    >
+      <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+
 export function SidebarLink({ context }: PluginSidebarProps): ReactNode {
   const nav = useHostNavigation();
   const location = useHostLocation();
   if (!context.companyPrefix) return null;
   const target = `/${context.companyPrefix}/outputs`;
   const active = location.pathname.startsWith(target);
+  // Match SidebarNavItem styling from the host (ui/src/components/SidebarNavItem.tsx)
+  // so the plugin item looks native: same font weight, size, padding, and active
+  // colours as Dashboard / Issues / Routines / Goals.
+  const className = [
+    "flex items-center gap-2.5 px-3 py-2 pointer-coarse:py-1.5 text-[13px] font-medium transition-colors w-full text-left",
+    active
+      ? "bg-accent text-foreground"
+      : "text-foreground/80 hover:bg-accent/50 hover:text-foreground",
+  ].join(" ");
   return (
-    <button
-      type="button"
-      onClick={() => nav.navigate(target)}
-      style={{
-        all: "unset",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "6px 10px",
-        borderRadius: 6,
-        color: active ? tokens.primary : tokens.fg,
-        background: active ? tokens.accent : "transparent",
-        fontSize: 14,
-        fontFamily: fontStack,
-      }}
-    >
-      <span aria-hidden style={{ fontSize: 14 }}>📂</span>
-      <span>Agent Outputs</span>
+    <button type="button" onClick={() => nav.navigate(target)} className={className}>
+      <span className="relative shrink-0">
+        <FolderOpenIcon />
+      </span>
+      <span className="truncate">Agent Outputs</span>
     </button>
   );
 }
