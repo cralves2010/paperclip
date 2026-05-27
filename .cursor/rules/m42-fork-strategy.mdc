@@ -58,8 +58,10 @@ Keep commits atomic. Each one survives `git rebase` cleanly when upstream evolve
 
 - **VPS:** Hostinger KVM 4, `72.61.6.37`, Ubuntu 24.04 + Docker
 - **URL:** https://agent.m42ai.tech (Caddy + Let's Encrypt)
-- **Deploy:** `ssh root@72.61.6.37` → `/opt/apps/paperclip` → `docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build server`
-- **Env vars relevant to branding:** `PAPERCLIP_INSTANCE_BRANDING=true`, `PAPERCLIP_BRAND_NAME=M42 Agent`, `PAPERCLIP_BRAND_SHORT_NAME=M42` (all in `.env.prod` on the VPS, not in git)
+- **Canonical deploy script:** `.deploy/16-pull-and-rebuild.sh` (gitignored, local-only). Pulls latest `branding/m42`, auto-bumps `PAPERCLIP_BRAND_REVISION` per HEAD SHA change (counter persisted in `.env.prod` + `.last-deployed-sha` on VPS), rebuilds server, validates. **Do not use other rebuild scripts in `.deploy/`** without reading their header — `17-deploy-with-revision.sh` was archived 2026-05-26 because its `rev-list --count origin/master..HEAD` formula jumped on every weekly upstream rebase.
+- **Deploy command:** `ssh root@72.61.6.37` and run the commands in `.deploy/16-pull-and-rebuild.sh` (the file is local on Windows workstation; not present on VPS — paste contents over SSH).
+- **Other canonical scripts at `.deploy/` root** (after 2026-05-26 cleanup): `26-list-final.sh` (DB company inspection), `13-test-routes.sh` (route smoke beyond `/` + `/onboarding`), `41-validate-m42.sh` (greps UI bundle for `M42 Agent` rebrand), `14-debug-branding.sh` (triage when `16` output looks wrong), `20-rebuild-with-opencode.sh` / `21-prepare-opencode-auth.sh` / `22-validate-opencode-auth.sh` (opencode runbook), `40-rebuild-verbose.sh` (full build log), `backup.sh`, bootstrap scripts `02/05/07/10/11/15`. Everything in `.deploy/_archive/` is reference-only.
+- **Env vars relevant to branding:** `PAPERCLIP_INSTANCE_BRANDING=true`, `PAPERCLIP_BRAND_NAME=M42 Agent`, `PAPERCLIP_BRAND_SHORT_NAME=M42`, `PAPERCLIP_BRAND_REVISION=<auto-incremented integer>` (all in `.env.prod` on the VPS, not in git)
 - **DB:** PostgreSQL 17 in Docker (volume `/opt/data/paperclip-db`), backups daily 03:00 in `/opt/backups/` (retention 30 days)
 
 ## Secrets and operational details
