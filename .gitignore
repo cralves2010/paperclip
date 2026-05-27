@@ -58,3 +58,9 @@ tests/release-smoke/playwright-report/
 .superpowers/
 .claude/worktrees/
 .herenow
+
+# Local-only fork ops scripts + HANDOVER secrets — see CLAUDE.md "Secrets
+# and operational details". Added 2026-05-27 to fix doc/reality drift:
+# CLAUDE.md and .cursor/rules claimed this was gitignored but the rule was
+# never actually committed.
+.deploy/
