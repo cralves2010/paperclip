@@ -36,7 +36,7 @@ Open the issue, then in this repo:
 1. Edit `.github/workflows/sync-upstream.yml`, replace `git rebase origin/master` with `git rebase <TAG>` (the tag in the issue title).
 2. Commit `ci:` to `branding/m42`.
 3. Trigger workflow manually, verify rebase clean.
-4. Deploy to VPS (see `.deploy/HANDOVER.md` for the rebuild command).
+4. Deploy to VPS (run `.deploy/16-pull-and-rebuild.sh`).
 
 Do **not** migrate to a tag before the signal — the schema would regress.
 
@@ -72,14 +72,7 @@ A sibling Docker container `claude-runner` hosts Claude Code, Codex and OpenCode
 
 ## Secrets and operational details
 
-The local file `.deploy/HANDOVER.md` on the Windows workstation (`c:\Users\cralv\dev\paperclip\.deploy\HANDOVER.md`) holds:
-
-- `BETTER_AUTH_SECRET`
-- `POSTGRES_PASSWORD`
-- VPS SSH details
-- Full deploy/restore commands
-
-`.deploy/` is in `.gitignore` — never commit it. The file is not replicated to remote storage; protect it locally.
+Production secrets (`BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD`, Slack/Google MCP tokens, etc.) live exclusively in `/opt/apps/paperclip/.env.prod` and `/opt/data/paperclip/.config/opencode/opencode.json` on the VPS. There is no local mirror — recover by `ssh root@72.61.6.37 'cat /opt/apps/paperclip/.env.prod'` if needed. `.deploy/` on this workstation is gitignored and holds only ops scripts.
 
 ## Brand surface — where "Paperclip" still appears
 
@@ -112,7 +105,7 @@ Use `BRAND_NAME` (long, "M42 Agent") or `BRAND_SHORT_NAME` (short, "M42") from `
 |---|---|---|
 | Cursor IDE | `.cursor/rules/m42-fork-strategy.mdc` | Cursor agents (any chat in this workspace) |
 | Claude Code CLI / other agents | This file (`CLAUDE.md`) | Anything outside Cursor that reads `CLAUDE.md` |
-| Local secrets / runbook | `.deploy/HANDOVER.md` (Windows-only, gitignored) | The human operator |
 | Knowledge base | `c:\Users\cralv\dev\Obsidian\Wiki\Projetos\Paperclip-Fork\` | The human operator (long-term memory) |
+| Local observability dashboard | `.deploy/observability/` (gitignored — collector + HTML dashboard) | The human operator |
 
-Keep the three rule files (`.cursor/rules`, `CLAUDE.md`, Obsidian Wiki) in sync when policy changes. The HANDOVER stays separate because it carries secrets.
+Keep `.cursor/rules`, `CLAUDE.md`, and the Obsidian Wiki in sync when policy changes.
