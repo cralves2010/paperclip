@@ -59,8 +59,8 @@ tests/release-smoke/playwright-report/
 .claude/worktrees/
 .herenow
 
-# Local-only fork ops scripts + HANDOVER secrets — see CLAUDE.md "Secrets
-# and operational details". Added 2026-05-27 to fix doc/reality drift:
-# CLAUDE.md and .cursor/rules claimed this was gitignored but the rule was
-# never actually committed.
+# Local-only fork ops scripts + observability tooling — see CLAUDE.md
+# "Secrets and operational details" and `.deploy/observability/README.md`.
+# Added 2026-05-27 to fix doc/reality drift: CLAUDE.md and .cursor/rules
+# claimed this was gitignored but the rule was never actually committed.
 .deploy/

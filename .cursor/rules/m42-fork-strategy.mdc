@@ -41,7 +41,7 @@ It opens automatically when the smart check passes. To migrate at that point:
 1. Edit `.github/workflows/sync-upstream.yml`, replace `git rebase origin/master` with `git rebase <TAG>` (the tag in the issue title).
 2. Commit `ci:` to `branding/m42`.
 3. Trigger workflow manually, verify rebase clean.
-4. Deploy to VPS (see HANDOVER for the rebuild command).
+4. Deploy to VPS (run `.deploy/16-pull-and-rebuild.sh`).
 
 Do **not** migrate to a tag before the signal — the schema would regress.
 
@@ -66,14 +66,7 @@ Keep commits atomic. Each one survives `git rebase` cleanly when upstream evolve
 
 ## Secrets and operational details
 
-Local file `.deploy/HANDOVER.md` on the Windows workstation (`c:\Users\cralv\dev\paperclip\.deploy\HANDOVER.md`) holds:
-
-- `BETTER_AUTH_SECRET`
-- `POSTGRES_PASSWORD`
-- VPS SSH details
-- Full deploy/restore commands
-
-`.deploy/` is in `.gitignore` — never commit it. The file is also NOT replicated to remote storage; protect it locally.
+Production secrets (`BETTER_AUTH_SECRET`, `POSTGRES_PASSWORD`, integration tokens) live on the VPS at `/opt/apps/paperclip/.env.prod` and `/opt/data/paperclip/.config/opencode/opencode.json`. No local mirror — recover via `ssh root@72.61.6.37 'cat /opt/apps/paperclip/.env.prod'`. `.deploy/` on this workstation is gitignored and holds only ops scripts.
 
 ## Brand surface — where "Paperclip" still appears
 
