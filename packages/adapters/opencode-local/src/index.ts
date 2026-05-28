@@ -44,7 +44,12 @@ export const SANDBOX_INSTALL_COMMAND =
   'fi; ' +
   'fi';
 
-export const DEFAULT_OPENCODE_LOCAL_MODEL = "openai/gpt-5.2-codex";
+// Fork (branding/m42): the M42 runner authenticates the OpenRouter + opencode
+// providers, NOT OpenAI directly. Upstream defaults to openai/* models, which
+// 503 "model unavailable" on this runner. Default + curated list + cheap lane
+// all point at OpenRouter models the runner actually serves. The picker field
+// is type-to-create, so any other provider/model id still works when typed.
+export const DEFAULT_OPENCODE_LOCAL_MODEL = "openrouter/anthropic/claude-sonnet-4.6";
 
 export function isValidOpenCodeModelId(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -55,19 +60,19 @@ export function isValidOpenCodeModelId(value: unknown): value is string {
 
 export const models: Array<{ id: string; label: string }> = [
   { id: DEFAULT_OPENCODE_LOCAL_MODEL, label: DEFAULT_OPENCODE_LOCAL_MODEL },
-  { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
-  { id: "openai/gpt-5.2", label: "openai/gpt-5.2" },
-  { id: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
-  { id: "openai/gpt-5.1-codex-mini", label: "openai/gpt-5.1-codex-mini" },
+  { id: "openrouter/anthropic/claude-opus-4.7", label: "openrouter/anthropic/claude-opus-4.7" },
+  { id: "openrouter/moonshotai/kimi-k2.6", label: "openrouter/moonshotai/kimi-k2.6" },
+  { id: "openrouter/anthropic/claude-haiku-4.5", label: "openrouter/anthropic/claude-haiku-4.5" },
+  { id: "openrouter/amazon/nova-micro-v1", label: "openrouter/amazon/nova-micro-v1" },
 ];
 
 export const modelProfiles: AdapterModelProfileDefinition[] = [
   {
     key: "cheap",
     label: "Cheap",
-    description: "Use OpenCode's known Codex mini model as the budget lane.",
+    description: "Budget lane via OpenRouter — Amazon Nova Micro (cheapest production-safe model with tool-use). Runner has no OpenAI provider.",
     adapterConfig: {
-      model: "openai/gpt-5.1-codex-mini",
+      model: "openrouter/amazon/nova-micro-v1",
       variant: "low",
     },
     source: "adapter_default",
