@@ -47,9 +47,10 @@ export const SANDBOX_INSTALL_COMMAND =
 // Fork (branding/m42): the M42 runner authenticates the OpenRouter + opencode
 // providers, NOT OpenAI directly. Upstream defaults to openai/* models, which
 // 503 "model unavailable" on this runner. Default + curated list + cheap lane
-// all point at OpenRouter models the runner actually serves. The picker field
-// is type-to-create, so any other provider/model id still works when typed.
-export const DEFAULT_OPENCODE_LOCAL_MODEL = "openrouter/anthropic/claude-sonnet-4.6";
+// all point at cheap, tool-use-capable OpenRouter models the runner serves.
+// The picker is type-to-create, so any other provider/model still works typed
+// (set a stronger primary like openrouter/anthropic/claude-sonnet-4.6 per agent).
+export const DEFAULT_OPENCODE_LOCAL_MODEL = "openrouter/amazon/nova-micro-v1";
 
 export function isValidOpenCodeModelId(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -58,12 +59,20 @@ export function isValidOpenCodeModelId(value: unknown): value is string {
   return Boolean(trimmed) && slashIndex > 0 && slashIndex !== trimmed.length - 1;
 }
 
+// 10 cheapest tool-use-capable OpenRouter models the runner serves, cheapest
+// first (prices per 1M tokens, OpenRouter 2026). Suggestions only — the field
+// is type-to-create, so a stronger model (sonnet/opus/kimi) still works typed.
 export const models: Array<{ id: string; label: string }> = [
-  { id: DEFAULT_OPENCODE_LOCAL_MODEL, label: DEFAULT_OPENCODE_LOCAL_MODEL },
-  { id: "openrouter/anthropic/claude-opus-4.7", label: "openrouter/anthropic/claude-opus-4.7" },
-  { id: "openrouter/moonshotai/kimi-k2.6", label: "openrouter/moonshotai/kimi-k2.6" },
-  { id: "openrouter/anthropic/claude-haiku-4.5", label: "openrouter/anthropic/claude-haiku-4.5" },
-  { id: "openrouter/amazon/nova-micro-v1", label: "openrouter/amazon/nova-micro-v1" },
+  { id: "openrouter/meta-llama/llama-3.1-8b-instruct", label: "openrouter/meta-llama/llama-3.1-8b-instruct" },        // $0.02 / $0.05
+  { id: "openrouter/amazon/nova-micro-v1", label: "openrouter/amazon/nova-micro-v1" },                               // $0.035 / $0.14
+  { id: "openrouter/mistralai/mistral-small-24b-instruct-2501", label: "openrouter/mistralai/mistral-small-24b-instruct-2501" }, // $0.05 / $0.08
+  { id: "openrouter/amazon/nova-lite-v1", label: "openrouter/amazon/nova-lite-v1" },                                 // $0.06 / $0.24
+  { id: "openrouter/microsoft/phi-4", label: "openrouter/microsoft/phi-4" },                                         // $0.065 / $0.14
+  { id: "openrouter/google/gemini-2.0-flash-lite-001", label: "openrouter/google/gemini-2.0-flash-lite-001" },       // $0.075 / $0.30
+  { id: "openrouter/google/gemma-3-27b-it", label: "openrouter/google/gemma-3-27b-it" },                             // $0.08 / $0.16
+  { id: "openrouter/google/gemini-2.5-flash-lite", label: "openrouter/google/gemini-2.5-flash-lite" },               // $0.10 / $0.40
+  { id: "openrouter/google/gemini-2.0-flash-001", label: "openrouter/google/gemini-2.0-flash-001" },                 // $0.10 / $0.40
+  { id: "openrouter/meta-llama/llama-3.3-70b-instruct", label: "openrouter/meta-llama/llama-3.3-70b-instruct" },     // $0.10 / $0.32
 ];
 
 export const modelProfiles: AdapterModelProfileDefinition[] = [
