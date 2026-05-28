@@ -44,7 +44,12 @@ export const SANDBOX_INSTALL_COMMAND =
   'fi; ' +
   'fi';
 
-export const DEFAULT_OPENCODE_LOCAL_MODEL = "openai/gpt-5.2-codex";
+// Fork (branding/m42): the M42 runner authenticates the OpenRouter + opencode
+// providers, NOT OpenAI directly. Upstream defaults to openai/* models, which
+// 503 "model unavailable" on this runner. Default + curated list + cheap lane
+// all point at OpenRouter models the runner actually serves. The picker field
+// is type-to-create, so any other provider/model id still works when typed.
+export const DEFAULT_OPENCODE_LOCAL_MODEL = "openrouter/anthropic/claude-sonnet-4.6";
 
 export function isValidOpenCodeModelId(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -55,22 +60,24 @@ export function isValidOpenCodeModelId(value: unknown): value is string {
 
 export const models: Array<{ id: string; label: string }> = [
   { id: DEFAULT_OPENCODE_LOCAL_MODEL, label: DEFAULT_OPENCODE_LOCAL_MODEL },
-  { id: "openai/gpt-5.4", label: "openai/gpt-5.4" },
-  { id: "openai/gpt-5.2", label: "openai/gpt-5.2" },
-  { id: "openai/gpt-5.1-codex-max", label: "openai/gpt-5.1-codex-max" },
-  { id: "openai/gpt-5.1-codex-mini", label: "openai/gpt-5.1-codex-mini" },
+  { id: "openrouter/anthropic/claude-opus-4.7", label: "openrouter/anthropic/claude-opus-4.7" },
+  { id: "openrouter/moonshotai/kimi-k2.6", label: "openrouter/moonshotai/kimi-k2.6" },
+  { id: "openrouter/anthropic/claude-haiku-4.5", label: "openrouter/anthropic/claude-haiku-4.5" },
+  { id: "openrouter/amazon/nova-micro-v1", label: "openrouter/amazon/nova-micro-v1" },
 ];
 
-export const DEFAULT_OPENCODE_CHEAP_MODEL = "openai/gpt-5.1-codex-mini";
+// Fork (branding/m42): upstream defaults this to openai/gpt-5.1-codex-mini, but
+// the M42 runner has no OpenAI provider (OpenRouter only), so the fork default is
+// Amazon Nova Micro via OpenRouter (cheapest production-safe model with tool-use).
+// The upstream PAPERCLIP_OPENCODE_CHEAP_MODEL override below still takes priority.
+export const DEFAULT_OPENCODE_CHEAP_MODEL = "openrouter/amazon/nova-micro-v1";
 
 // The "cheap" budget profile (used for recovery retries and other low-cost lanes).
-// Defaults to OpenCode's known Codex mini model, but is overridable so a deployment
-// routing through a gateway that does not serve that model (e.g. an EU LLM gateway)
-// can point the budget lane at a gateway-served model instead -- otherwise recovery
-// retries fail with "model not found". PAPERCLIP_OPENCODE_CHEAP_MODEL takes priority;
-// PAPERCLIP_OPENCODE_SMALL_MODEL (the auxiliary/title model) is reused as a sensible
-// fallback so a single setting covers both budget lanes. The default keeps the
-// upstream behaviour (with the Codex `variant: "low"`).
+// Overridable so a deployment routing through a gateway that does not serve the
+// default model can point the budget lane at a gateway-served model instead --
+// otherwise recovery retries fail with "model not found". PAPERCLIP_OPENCODE_CHEAP_MODEL
+// takes priority; PAPERCLIP_OPENCODE_SMALL_MODEL (the auxiliary/title model) is reused
+// as a sensible fallback so a single setting covers both budget lanes.
 //
 // This module is shared client/server code (the UI imports it for
 // DEFAULT_OPENCODE_LOCAL_MODEL etc.), so it must not touch the global `process`
