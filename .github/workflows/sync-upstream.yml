@@ -142,11 +142,21 @@ jobs:
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EOF
           )
-          gh issue create \
+          # Ensure labels exist (idempotent) so issue creation never fails silently.
+          gh label create sync --repo "${{ github.repository }}" --color 1d76db --description "Upstream sync automation" --force >/dev/null 2>&1 || true
+          gh label create needs-manual --repo "${{ github.repository }}" --color d93f0b --description "Requires manual resolution" --force >/dev/null 2>&1 || true
+          if gh issue create \
             --repo "${{ github.repository }}" \
             --title "Upstream sync needs attention ($DATE)" \
             --body "$BODY" \
-            --label "sync,needs-manual" || true
+            --label "sync" --label "needs-manual"; then
+            echo "::notice::opened sync-needs-manual issue"
+          else
+            echo "::error::could not open sync issue — check labels/permissions"
+          fi
+          # Surface the conflict as a FAILED run so it shows red in the Actions tab,
+          # instead of a misleading green check (the rebase --abort masked it before).
+          exit 1
 
       # Detect new stable upstream tag (vYYYY.MDD.0). When such a tag appears
       # and includes our current origin/master (i.e. switching to it would not
@@ -234,11 +244,13 @@ jobs:
           Triggered by run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EOF
           )
+          gh label create upstream-tag --repo "${{ github.repository }}" --color 0e8a16 --description "Upstream stable tag tracking" --force >/dev/null 2>&1 || true
+          gh label create ready-to-switch --repo "${{ github.repository }}" --color fbca04 --description "Safe to switch sync strategy" --force >/dev/null 2>&1 || true
           gh issue create \
             --repo "${{ github.repository }}" \
             --title "$TITLE" \
             --body "$BODY" \
-            --label "upstream-tag,ready-to-switch" || true
+            --label "upstream-tag" --label "ready-to-switch" || true
 
       - name: Summary
         run: |
