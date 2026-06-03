@@ -117,6 +117,14 @@ Before ending any heartbeat, apply this final-disposition checklist:
 - Delegated follow-up: create the follow-up issue directly, link it with `parentId`/`goalId`, and use blockers when the current issue must wait for that work.
 - Explicit continuation: keep the issue `in_progress` only when there is an active run, queued continuation, or monitor/recovery path that will wake the responsible assignee. Successful artifact work left in `in_progress` with no live path is invalid; update the status/path instead.
 
+**Recovery-loop self-detection (narrow override of Rule #1).** Before you redo any work, check whether this heartbeat is a recovery loop. Treat it as a loop — and STOP retrying — if **any** of these is true:
+
+- the wake reason / wake context is a recovery or corrective wake (e.g. `PAPERCLIP_WAKE_REASON` indicates recovery), **or**
+- you have already been woken on this issue before without changing its status, **or**
+- the action you are about to retry has already failed on a previous run.
+
+When it is a loop, do **not** retry the work and do **not** hand it back to a human as a question. Instead: choose the `blocked` disposition, name the unblock owner and the exact blocker, post **one** concise escalation comment, and exit. This is the single case where picking `blocked` for a human/owner beats retrying — it overrides Rule #1 **only here**, because repeated no-progress wakes burn budget without delivering. The server also caps automatic recovery attempts and will hard-stop the loop, but you should self-detect and stop first.
+
 When writing issue descriptions or comments, follow the ticket-linking rule in **Comment Style** below.
 
 ```json
