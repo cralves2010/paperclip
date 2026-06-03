@@ -324,6 +324,53 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     });
   });
 
+  it("stops re-arming the corrective wake once recovery attempts are exhausted", async () => {
+    const { companyId, coderId, sourceIssue } = await seedCompany();
+    const enqueueWakeup = vi.fn(async () => null);
+    const recovery = recoveryService(db, { enqueueWakeup });
+    const latestRun = {
+      id: randomUUID(),
+      agentId: coderId,
+      status: "failed",
+      error: "adapter failed",
+      errorCode: "adapter_failed",
+      contextSnapshot: { retryReason: "issue_continuation_needed" },
+      livenessState: "needs_followup",
+    } as const;
+
+    // Escalate past the cap (MAX_STRANDED_RECOVERY_ATTEMPTS = 3). Attempts 1-2
+    // re-arm the wake; attempt 3 trips the guard, so 4 escalations must still
+    // produce only 2 wakes and a single "human attention required" notice.
+    for (let i = 0; i < 4; i += 1) {
+      await recovery.escalateStrandedAssignedIssue({
+        issue: sourceIssue,
+        previousStatus: "in_progress",
+        latestRun,
+        comment: "Automatic continuation recovery failed.",
+      });
+    }
+
+    const actionRows = await db
+      .select()
+      .from(issueRecoveryActions)
+      .where(eq(issueRecoveryActions.sourceIssueId, sourceIssue.id));
+    expect(actionRows).toHaveLength(1);
+    expect(actionRows[0]?.companyId).toBe(companyId);
+    expect(actionRows[0]?.attemptCount).toBeGreaterThanOrEqual(3);
+    expect(actionRows[0]?.maxAttempts).toBe(3);
+    expect(enqueueWakeup).toHaveBeenCalledTimes(2);
+
+    const [updatedIssue] = await db.select().from(issues).where(eq(issues.id, sourceIssue.id));
+    expect(updatedIssue?.status).toBe("blocked");
+
+    const comments = await db
+      .select()
+      .from(issueComments)
+      .where(eq(issueComments.issueId, sourceIssue.id));
+    const exhaustedComments = comments.filter((row) => (row.body ?? "").includes("Recovery loop exhausted"));
+    expect(exhaustedComments).toHaveLength(1);
+  });
+
   it("reuses the same source-scoped action when latest run IDs change while the cause stays the same", async () => {
     const { companyId, managerId, coderId, sourceIssue } = await seedCompany();
     const enqueueWakeup = vi.fn(async () => null);

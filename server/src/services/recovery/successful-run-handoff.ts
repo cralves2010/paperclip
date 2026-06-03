@@ -325,6 +325,8 @@ export function buildSuccessfulRunHandoffInstruction(input: {
     "**Is there more work to do?**",
     `4. Either delegate follow-up work (create/link a follow-up issue and block this one on it, or close this issue if its scope is independently complete) or record an explicit continuation path with \`resumeIntent: true\`, \`resumeFromRunId: ${input.sourceRunId}\`, and a concrete next action. Do not perform the remaining source work in this recovery run; the follow-up/resume wake must use the normal model lane.`,
     "",
+    "Recovery-loop guard: if this is not your first recovery wake on this issue, or a disposition you already tried did not stick, do not keep retrying. Choose `blocked`, name the unblock owner and the exact blocker, post one concise escalation, and stop. Repeated no-progress recovery wakes must end in `blocked`, not another attempt — this overrides \"never ask a human to do what an agent could do\" in this narrow case.",
+    "",
     "Comments, document revisions, work-product writes, and continuation summaries are supporting evidence only — they do not satisfy this handoff unless the issue state/path also records one valid disposition. If this wake is status-only recovery, document or plan updates are not allowed.",
   ].join("\n");
 }
