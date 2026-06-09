@@ -396,6 +396,94 @@ describeEmbeddedPostgres("secretService", () => {
     expect(bindings.map((binding) => binding.configPath)).toEqual(["runtime.token"]);
   });
 
+  it("re-syncs flat (dot-less) config path refs without violating the target path uniqueness constraint", async () => {
+    const companyId = await seedCompany();
+    const svc = secretService(db);
+    const firstKey = await svc.create(companyId, {
+      name: `ssh-key-${randomUUID()}`,
+      provider: "local_encrypted",
+      value: "first-private-key",
+    });
+    const rotatedKey = await svc.create(companyId, {
+      name: `ssh-key-rotated-${randomUUID()}`,
+      provider: "local_encrypted",
+      value: "rotated-private-key",
+    });
+
+    // First save creates the binding at the flat config path (mirrors SSH environment create).
+    await svc.syncSecretRefsForTarget(
+      companyId,
+      { targetType: "environment", targetId: "env-1" },
+      [{ secretId: firstKey.id, configPath: "privateKeySecretRef" }],
+    );
+
+    // Editing the environment re-syncs the same flat config path. Before the fix the
+    // DELETE step only matched `privateKeySecretRef.%`, leaving the existing row in place,
+    // so the follow-up INSERT tripped company_secret_bindings_target_path_uq (500).
+    await expect(
+      svc.syncSecretRefsForTarget(
+        companyId,
+        { targetType: "environment", targetId: "env-1" },
+        [{ secretId: rotatedKey.id, configPath: "privateKeySecretRef" }],
+      ),
+    ).resolves.toBeTruthy();
+
+    const bindings = await db
+      .select()
+      .from(companySecretBindings)
+      .where(eq(companySecretBindings.targetId, "env-1"));
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({
+      configPath: "privateKeySecretRef",
+      secretId: rotatedKey.id,
+    });
+  });
+
+  it("does not over-delete sibling refs sharing a flat config path prefix during re-sync", async () => {
+    const companyId = await seedCompany();
+    const svc = secretService(db);
+    const primary = await svc.create(companyId, {
+      name: `ssh-primary-${randomUUID()}`,
+      provider: "local_encrypted",
+      value: "primary-key",
+    });
+    const sibling = await svc.create(companyId, {
+      name: `ssh-sibling-${randomUUID()}`,
+      provider: "local_encrypted",
+      value: "sibling-key",
+    });
+
+    // A neighbouring binding whose path shares the literal prefix but is a distinct key.
+    await svc.createBinding({
+      companyId,
+      secretId: sibling.id,
+      targetType: "environment",
+      targetId: "env-2",
+      configPath: "privateKeySecretRefOther",
+    });
+    await svc.syncSecretRefsForTarget(
+      companyId,
+      { targetType: "environment", targetId: "env-2" },
+      [{ secretId: primary.id, configPath: "privateKeySecretRef" }],
+    );
+
+    // Re-sync the flat path again; the sibling must survive (exact eq + literal-dot like).
+    await svc.syncSecretRefsForTarget(
+      companyId,
+      { targetType: "environment", targetId: "env-2" },
+      [{ secretId: primary.id, configPath: "privateKeySecretRef" }],
+    );
+
+    const bindings = await db
+      .select()
+      .from(companySecretBindings)
+      .where(eq(companySecretBindings.targetId, "env-2"));
+    expect(bindings.map((binding) => binding.configPath).sort()).toEqual([
+      "privateKeySecretRef",
+      "privateKeySecretRefOther",
+    ]);
+  });
+
   it("returns resolved secrets even when success metadata writes fail", async () => {
     const companyId = await seedCompany();
     const svc = secretService(db);
