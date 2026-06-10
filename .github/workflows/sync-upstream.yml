@@ -34,9 +34,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # PAT not needed because we only push to branches in this same repo
-          # and the default GITHUB_TOKEN has contents:write per permissions above.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # SYNC_PAT (fine-grained PAT, Contents R/W + Workflows R/W, scoped to
+          # this repo) is REQUIRED: the default GITHUB_TOKEN cannot push commits
+          # that create or update files under .github/workflows/ ("refusing to
+          # allow a GitHub App to create or update workflow ... without
+          # 'workflows' permission"). Upstream touches its workflows regularly,
+          # which broke the syncs of 2026-06-01 and 2026-06-08.
+          # The fallback keeps behavior identical to before if the secret is
+          # missing, so this change is safe to land before the secret exists.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Configure git identity + rerere
         run: |
@@ -251,6 +257,45 @@ jobs:
             --title "$TITLE" \
             --body "$BODY" \
             --label "upstream-tag" --label "ready-to-switch" || true
+
+      # Safety net: if any step above failed (e.g. push rejected, fetch error),
+      # open a needs-manual issue so the failure is not silent. Deduplicated by
+      # open issues carrying the sync + needs-manual labels, so the conflict
+      # step above (which exits 1 after opening its own issue) does not cause
+      # a second issue here.
+      - name: Open issue on unexpected failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%F)
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --label "sync" --label "needs-manual" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::open sync/needs-manual issue already exists (#$EXISTING), skipping"
+            exit 0
+          fi
+          gh label create sync --repo "${{ github.repository }}" --color 1d76db --description "Upstream sync automation" --force >/dev/null 2>&1 || true
+          gh label create needs-manual --repo "${{ github.repository }}" --color d93f0b --description "Requires manual resolution" --force >/dev/null 2>&1 || true
+          BODY=$(cat <<EOF
+          The weekly upstream sync workflow failed unexpectedly (a step errored
+          outside the known conflict/divergence paths).
+
+          Check the run log and resolve manually:
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Common cause: pushes touching .github/workflows/ require the SYNC_PAT
+          repository secret (fine-grained PAT with Contents R/W + Workflows R/W).
+          Verify the secret exists and has not expired.
+          EOF
+          )
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "sync-upstream failed on $DATE" \
+            --body "$BODY" \
+            --label "sync" --label "needs-manual" || \
+            echo "::error::could not open failure issue - check labels/permissions"
 
       - name: Summary
         run: |
