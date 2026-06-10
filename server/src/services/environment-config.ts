@@ -56,20 +56,21 @@ const sshEnvironmentConfigSchema = z.object({
 }).strict();
 
 const sshEnvironmentConfigProbeSchema = sshEnvironmentConfigSchema.extend({
-  // SSH private keys must end with a trailing newline — OpenSSH rejects
-  // otherwise-valid keys with "error in libcrypto / Permission denied
-  // (publickey)" if the final \n is missing. Do NOT .trim() the value here;
-  // drop empty/whitespace-only inputs explicitly and append the trailing
-  // newline so pasted keys (where browsers often strip the final \n)
-  // still authenticate.
+  // SSH private keys must end with a trailing newline: OpenSSH/libcrypto
+  // rejects otherwise-valid keys with "error in libcrypto / Permission
+  // denied (publickey)" if the final \n after the -----END----- marker is
+  // missing (browsers often strip it on paste). Normalize CRLF from Windows
+  // pastes and trim outer whitespace without touching the PEM body's
+  // internal newlines, then append exactly one trailing newline.
   privateKey: z
     .string()
     .optional()
     .nullable()
     .transform((value) => {
       if (!value) return null;
-      if (value.trim().length === 0) return null;
-      return value.endsWith("\n") ? value : value + "\n";
+      const normalized = value.replace(/\r\n/g, "\n").trim();
+      if (normalized.length === 0) return null;
+      return normalized + "\n";
     }),
 }).strict();
 
