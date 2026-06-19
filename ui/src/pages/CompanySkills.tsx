@@ -452,7 +452,7 @@ function CompatChip({ compatibility }: { compatibility: CompanySkillCompatibilit
     unknown: {
       icon: HelpCircle,
       label: "Unknown format",
-      tooltip: "Paperclip could not validate this skill as Agent Skills markdown. Install at your own risk.",
+      tooltip: `${BRAND_NAME} could not validate this skill as Agent Skills markdown. Install at your own risk.`,
       className: "border-yellow-500/40 bg-yellow-500/10 text-yellow-200",
     },
     invalid: {
@@ -4491,7 +4491,7 @@ export function CompanySkills() {
             <DialogDescription>
               {createDraft.forkedFromSkillId
                 ? "Review the fork metadata and create an editable company copy."
-                : "Create an editable company skill in the Paperclip workspace."}
+                : `Create an editable company skill in the ${BRAND_NAME} workspace.`}
             </DialogDescription>
           </DialogHeader>
           <NewSkillWizard
