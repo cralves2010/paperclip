@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Agent M42 — Slack App Home cockpit (v0 read-only preview)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --aubergine:#3F0E40; --aubergine-2:#350D36; --active:#1164A3;
+    --ink:#1D1C1D; --muted:#616061; --faint:#868686;
+    --line:#E8E8E8; --line-2:#DDDDDD; --green:#007A5A; --blue:#1264A3;
+    --amber:#E8912D; --page:#F3F3F3;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Lato',-apple-system,'Segoe UI',sans-serif;background:var(--page);color:var(--ink);
+       -webkit-font-smoothing:antialiased;padding:34px 30px 26px}
+  .title{font-size:22px;font-weight:900;letter-spacing:-.2px;margin:0 4px 4px}
+  .subtitle{font-size:13.5px;color:var(--muted);margin:0 4px 20px}
+  .stage{display:flex;gap:26px;align-items:flex-start}
+  .col{flex:1;min-width:0}
+  .plabel{font-size:12.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin:0 2px 9px}
+
+  /* ---- Slack window ---- */
+  .win{display:flex;height:812px;background:#fff;border-radius:9px;overflow:hidden;
+       box-shadow:0 12px 34px rgba(0,0,0,.16);border:1px solid #e2e2e2}
+  .rail{width:64px;background:var(--aubergine-2);display:flex;flex-direction:column;align-items:center;
+        padding:12px 0;gap:15px;flex:none}
+  .ws{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#4A154B,#611f69);
+      color:#fff;font-weight:900;font-size:14px;display:flex;align-items:center;justify-content:center}
+  .rdot{width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.12);display:flex;
+        align-items:center;justify-content:center;font-size:16px;color:#e9d9ea}
+  .rdot.plus{border:1.5px dashed rgba(255,255,255,.35);background:transparent;font-size:18px;color:#cbb6cc}
+
+  .side{width:210px;background:var(--aubergine);color:#CFC3D0;flex:none;padding:0}
+  .side-h{height:49px;display:flex;align-items:center;padding:0 15px;border-bottom:1px solid rgba(0,0,0,.16);
+          color:#fff;font-weight:900;font-size:15px;letter-spacing:-.2px}
+  .side-h .chev{margin-left:auto;font-size:12px;opacity:.7}
+  .grp{padding:14px 8px 2px;font-size:12.5px;color:#B9A6BB;font-weight:700}
+  .item{display:flex;align-items:center;gap:8px;padding:5px 11px;border-radius:6px;margin:1px 6px;
+        font-size:14.5px;color:#CFC3D0}
+  .item .h{opacity:.65;font-weight:400}
+  .item.active{background:var(--active);color:#fff}
+  .item .av{width:18px;height:18px;border-radius:4px;background:linear-gradient(135deg,#36C5F0,#2EB67D);
+            display:flex;align-items:center;justify-content:center;font-size:11px}
+
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;background:#fff}
+  .apptop{height:49px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px;flex:none}
+  .apptop .bot{width:24px;height:24px;border-radius:6px;background:linear-gradient(135deg,#611f69,#4A154B);
+               display:flex;align-items:center;justify-content:center;font-size:13px}
+  .apptop .nm{font-weight:900;font-size:15px}
+  .apptop .ap{font-size:11px;color:#fff;background:#616061;border-radius:3px;padding:1px 5px;font-weight:700;letter-spacing:.3px}
+  .tabs{display:flex;gap:20px;height:44px;align-items:center;padding:0 18px;border-bottom:1px solid var(--line);
+        font-size:14px;color:var(--muted);flex:none}
+  .tabs .t{height:44px;display:flex;align-items:center;font-weight:700;position:relative}
+  .tabs .t.on{color:var(--ink)}
+  .tabs .t.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--ink)}
+
+  .body{padding:16px 20px;overflow:hidden;flex:1;position:relative}
+  .hblock{font-size:18px;font-weight:900;letter-spacing:-.2px;margin:2px 0 8px}
+  .ctx{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:3px 0}
+  .ctx .leg{color:var(--faint)}
+  .div{height:1px;background:var(--line);margin:14px 0}
+  .btn{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;border-radius:4px;
+       padding:7px 13px;border:1px solid var(--line-2);background:#fff;color:var(--ink);white-space:nowrap}
+  .btn.pri{background:var(--green);color:#fff;border-color:var(--green)}
+  .btn.sm{padding:5px 11px;font-size:12.5px}
+
+  .row{display:flex;align-items:center;gap:12px;padding:9px 0}
+  .row .txt{flex:1;min-width:0}
+  .row .t1{font-size:14.5px;font-weight:700;line-height:1.3}
+  .row .t2{font-size:13px;color:var(--muted);margin-top:2px;display:flex;align-items:center;gap:6px}
+  .tag{font-family:'SFMono-Regular',Consolas,monospace;font-size:11.5px;background:#F0F0F0;color:#5a5a5a;
+       border-radius:3px;padding:1px 5px}
+  .st{font-weight:700}
+  .st.you{color:#B7791F}.st.blk{color:#B4232B}.st.wip{color:#1264A3}.st.done{color:#2A7D53}
+
+  .cocard{display:flex;align-items:center;gap:12px;padding:7px 0 2px}
+  .cocard .co{font-size:15px;font-weight:900}
+  .counts{font-size:12.5px;color:var(--muted);margin:0 0 6px 0;display:flex;gap:14px}
+
+  .foot{font-size:12px;color:var(--faint);margin-top:12px;line-height:1.5}
+
+  /* ---- modal panel ---- */
+  .dim{position:absolute;inset:0;background:rgba(29,28,29,.42)}
+  .modal{position:absolute;top:60px;left:50%;transform:translateX(-50%);width:430px;background:#fff;
+         border-radius:11px;box-shadow:0 24px 60px rgba(0,0,0,.32);overflow:hidden}
+  .m-top{display:flex;align-items:center;padding:15px 18px 13px;border-bottom:1px solid var(--line)}
+  .m-title{font-size:16px;font-weight:900;letter-spacing:-.2px}
+  .m-x{margin-left:auto;color:var(--faint);font-size:19px;line-height:1;cursor:default}
+  .m-body{padding:15px 18px 18px}
+  .fields{display:flex;flex-wrap:wrap;gap:13px 26px;margin-bottom:4px}
+  .field{min-width:120px}
+  .field .k{font-size:12px;font-weight:900;color:var(--muted);margin-bottom:2px}
+  .field .v{font-size:14px;font-weight:700}
+  .delv{font-size:15px;font-weight:900;margin:2px 0 4px;display:flex;align-items:center;gap:7px}
+  .badge{font-size:12px;color:var(--muted);margin-bottom:9px}
+  .lbl{font-size:12.5px;font-weight:900;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin:0 0 3px}
+  .p{font-size:13.5px;line-height:1.5;margin-bottom:2px}
+  .p .bul{color:var(--ink)}
+  .m-actions{display:flex;gap:9px;margin:4px 0 2px}
+  .comingsoon{font-size:12px;color:var(--faint);margin-top:6px}
+  .caption{margin:18px 4px 0;font-size:12.5px;color:var(--muted);text-align:center}
+  .badgekey{font-size:11.5px;color:var(--faint)}
+</style>
+</head>
+<body>
+  <div class="title">Agent M42 — Slack App Home cockpit · v0 read-only preview</div>
+  <div class="subtitle">Private cockpit inside Slack · sample data: JRS + Brightly · same app promotes to Derek by granting access</div>
+
+  <div class="stage">
+    <!-- ============ PANEL A · HOME TAB ============ -->
+    <div class="col">
+      <div class="plabel">A · Home tab — the glance</div>
+      <div class="win">
+        <div class="rail">
+          <div class="ws">M42</div>
+          <div class="rdot">#</div>
+          <div class="rdot">✉️</div>
+          <div class="rdot" style="background:var(--active)">🤖</div>
+          <div class="rdot plus">+</div>
+        </div>
+        <div class="side">
+          <div class="side-h">M42 HQ <span class="chev">▾</span></div>
+          <div class="grp">Channels</div>
+          <div class="item"><span class="h">#</span> general</div>
+          <div class="item"><span class="h">#</span> agent-m42-reports</div>
+          <div class="grp">Apps</div>
+          <div class="item active"><span class="av">🤖</span> Agent M42</div>
+          <div class="item"><span class="av" style="background:#4A154B">◆</span> Google Drive</div>
+        </div>
+        <div class="main">
+          <div class="apptop">
+            <div class="bot">🤖</div><div class="nm">Agent M42</div><div class="ap">APP</div>
+          </div>
+          <div class="tabs"><div class="t">Messages</div><div class="t">About</div><div class="t on">Home</div></div>
+          <div class="body">
+            <div class="hblock">Agent M42 · Portfolio Cockpit</div>
+            <div class="ctx">🔄 Synced from <b style="color:#5a5a5a">M42 Central Task Tracker</b> · Updated Jul 2, 9:14 AM
+              <span class="leg">· Legend: 🟢 On track · 🟡 At risk · 🔴 Blocked</span></div>
+            <div style="margin-top:8px"><span class="btn sm">🔄 Refresh</span></div>
+            <div class="div"></div>
+
+            <div class="hblock">🔔 Needs You</div>
+            <div class="row">
+              <div class="txt">
+                <div class="t1">Pick Brightly's canonical price</div>
+                <div class="t2"><span class="tag">Brightly</span> · <span class="st you">🟠 Needs you</span> — gates the launch chain</div>
+              </div>
+              <span class="btn pri">Open</span>
+            </div>
+            <div class="row">
+              <div class="txt">
+                <div class="t1">School contacts — 62 Tucson principals</div>
+                <div class="t2"><span class="tag">JRS</span> · <span class="st you">🟡 Delivered · awaiting you</span></div>
+              </div>
+              <span class="btn pri">Open</span>
+            </div>
+            <div class="row">
+              <div class="txt">
+                <div class="t1">Testimonials form (live)</div>
+                <div class="t2"><span class="tag">JRS</span> · <span class="st you">🟡 Delivered · awaiting you</span></div>
+              </div>
+              <span class="btn pri">Open</span>
+            </div>
+            <div class="ctx" style="margin-top:6px">Showing 3 of 3 · you're all caught up</div>
+            <div class="div"></div>
+
+            <div class="hblock">📊 Portfolio Health</div>
+            <div class="cocard"><div class="co">🟡 JRS</div><div class="st you" style="font-size:13.5px">At risk</div>
+              <span class="btn sm" style="margin-left:auto">View →</span></div>
+            <div class="counts">🔵 5 In progress · 🟡 2 Awaiting you · 🔴 1 Blocked</div>
+            <div class="cocard"><div class="co">🔴 Brightly</div><div class="st blk" style="font-size:13.5px">Blocked</div>
+              <span class="btn sm" style="margin-left:auto">View →</span></div>
+            <div class="counts">🔵 4 In progress · 🟡 1 Awaiting you · 🔴 3 Blocked</div>
+            <div class="div"></div>
+
+            <div class="foot">Read-only cockpit (v0) · Actions (approve · request changes · comment) coming in v1 · Data: M42 Central Task Tracker (Google Sheet)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ PANEL B · TASK MODAL ============ -->
+    <div class="col">
+      <div class="plabel">B · Task detail — the drill-in</div>
+      <div class="win">
+        <div class="rail">
+          <div class="ws">M42</div>
+          <div class="rdot">#</div>
+          <div class="rdot">✉️</div>
+          <div class="rdot" style="background:var(--active)">🤖</div>
+          <div class="rdot plus">+</div>
+        </div>
+        <div class="side">
+          <div class="side-h">M42 HQ <span class="chev">▾</span></div>
+          <div class="grp">Channels</div>
+          <div class="item"><span class="h">#</span> general</div>
+          <div class="item"><span class="h">#</span> agent-m42-reports</div>
+          <div class="grp">Apps</div>
+          <div class="item active"><span class="av">🤖</span> Agent M42</div>
+          <div class="item"><span class="av" style="background:#4A154B">◆</span> Google Drive</div>
+        </div>
+        <div class="main">
+          <div class="apptop">
+            <div class="bot">🤖</div><div class="nm">Agent M42</div><div class="ap">APP</div>
+          </div>
+          <div class="tabs"><div class="t">Messages</div><div class="t">About</div><div class="t on">Home</div></div>
+          <div class="body">
+            <!-- dimmed home behind -->
+            <div style="filter:grayscale(.3);opacity:.55">
+              <div class="hblock">Agent M42 · Portfolio Cockpit</div>
+              <div class="ctx">🔄 Synced from M42 Central Task Tracker · Updated Jul 2, 9:14 AM</div>
+              <div class="div"></div>
+              <div class="hblock">🔔 Needs You</div>
+              <div class="row"><div class="txt"><div class="t1">Pick Brightly's canonical price</div>
+                <div class="t2"><span class="tag">Brightly</span> · 🟠 Needs you</div></div><span class="btn pri">Open</span></div>
+              <div class="row"><div class="txt"><div class="t1">School contacts — 62 Tucson principals</div>
+                <div class="t2"><span class="tag">JRS</span> · 🟡 Delivered · awaiting you</div></div><span class="btn pri">Open</span></div>
+            </div>
+            <div class="dim"></div>
+            <div class="modal">
+              <div class="m-top">
+                <div class="m-title">School contacts — 62 T…</div>
+                <div class="m-x">✕</div>
+              </div>
+              <div class="m-body">
+                <div class="fields">
+                  <div class="field"><div class="k">Status</div><div class="v st you">🟡 Delivered · awaiting you</div></div>
+                  <div class="field"><div class="k">Company</div><div class="v"><span class="tag">JRS</span></div></div>
+                  <div class="field"><div class="k">Task ID</div><div class="v"><span class="tag">JRS-41</span></div></div>
+                  <div class="field"><div class="k">Owner</div><div class="v">School Sourcing (agent)</div></div>
+                </div>
+                <div class="div" style="margin:12px 0"></div>
+                <div class="lbl">Deliverable</div>
+                <div class="delv">📊 JRS — Tucson (TUSD) principals</div>
+                <div class="badge">📊 Google Sheet · Updated Jun 29 by Agent M42</div>
+                <div class="m-actions">
+                  <span class="btn">📄 Open in Drive</span>
+                  <span class="btn">💬 Open in Slack</span>
+                </div>
+                <div class="div" style="margin:13px 0"></div>
+                <div class="lbl">Description</div>
+                <div class="p">62 verified Tucson / TUSD school principals with emails, ready for outreach. The next district batch can be generated on demand.</div>
+                <div class="div" style="margin:13px 0"></div>
+                <div class="lbl">What's left</div>
+                <div class="p"><span class="bul">•</span> Your OK to start outreach (sequence #42)</div>
+                <div class="p"><span class="bul">•</span> Confirm Jason as the sender</div>
+                <div class="comingsoon">Actions (approve · request changes · comment) coming in v1</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="caption">v0 = read-only · privacy enforced by an in-app allowlist (Claudio + Derek + whoever you add) · statuses shown are the real working state, not the stale "Not Started" sheet value</div>
+</body>
+</html>

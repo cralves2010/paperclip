@@ -1,0 +1,21 @@
+# Standalone compose for the Agent M42 Slack cockpit sidecar.
+# Kept SEPARATE from the main docker-compose.yml so the weekly upstream rebase
+# never conflicts with it (decoupled, rebase-immune).
+#
+# Deploy on the VPS from /opt/apps/paperclip/docker/slack-cockpit:
+#   docker compose -f docker-compose.cockpit.yml up -d --build
+#
+# Requires (same dir):
+#   .env.cockpit  — SLACK_BOT_TOKEN, SLACK_APP_TOKEN, GOOGLE_SA_JSON=/app/sa.json,
+#                   SHEET_ID, SHEET_RANGE, COCKPIT_ALLOWLIST
+#   sa.json       — Google service-account key (read-only, shared on the Sheet)
+
+services:
+  slack-cockpit:
+    build: .
+    image: agent-m42-slack-cockpit
+    container_name: agent-m42-slack-cockpit
+    restart: unless-stopped
+    env_file: .env.cockpit
+    volumes:
+      - ./sa.json:/app/sa.json:ro
