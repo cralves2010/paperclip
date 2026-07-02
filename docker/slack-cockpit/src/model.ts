@@ -48,6 +48,7 @@ export interface Task {
   deliverableTitle?: string
   deliverableDriveUrl?: string
   deliverableSlackUrl?: string
+  deliverableOtherUrl?: string
   description?: string
   dependency?: string
   lastUpdated?: string

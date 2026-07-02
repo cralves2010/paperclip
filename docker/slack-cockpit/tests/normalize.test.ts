@@ -12,6 +12,10 @@ describe('normalizeStatus (priority-ordered, first match wins)', () => {
     ['Not Started', 'queued'],
     ['drafting the sequence', 'in_progress'],
     ['some unmapped nonsense', 'in_progress'],
+    ['In Progress', 'in_progress'],
+    ['Blocked', 'blocked'],
+    ['Waiting', 'delivered_awaiting'],
+    ['Done', 'done'],
   ] as const)('%s -> %s', (raw, expected) => {
     expect(normalizeStatus(raw)).toBe(expected)
   })

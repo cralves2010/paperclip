@@ -1,31 +1,41 @@
 import { expect, test } from 'vitest'
 import { parseRows } from '../src/sheets.js'
 
-const rows = [
-  ['Task#', 'Business', 'Task', 'Owner', 'Dependency/Blocker', 'Working Status', 'Deliverable Link', 'Last Updated'],
-  ['41', 'JRS', 'School contacts — 62 Tucson principals', 'Agent M42', '', 'Delivered - awaiting review', 'https://docs.google.com/spreadsheets/d/1-vmz/edit', '2026-06-29'],
-  ['13', 'Brightly', 'Confirm website ready', 'Me', 'price decision', 'blocked — waiting on legal', 'https://m42hqworkspace.slack.com/archives/x/p1', '2026-06-24'],
-  ['99', 'Acme', 'Ignore me', 'x', '', 'done', '', ''],
+// Real live header row (14 cols, verified via Drive on 2026-07-02) + an optional
+// appended "Deliverable Link" column the cockpit reads when present.
+const HEADER = [
+  'Task #', 'Priority Tier', 'Business / Section', 'Applies To', 'Task', 'Owner',
+  'Human Backup', 'Type', 'Dependency / Blocker', 'Status', 'Next action',
+  'Blocked on / waiting for', 'Owner-next', 'Last updated', 'Deliverable Link',
 ]
 
-test('parseRows maps headers, normalizes status, classifies deliverable source, filters to JRS/Brightly', () => {
+const rows = [
+  HEADER,
+  ['42', 'P0', 'JRS', 'JRS', 'School outreach email sequence', 'Agent M42', 'Jason', 'One-time', 'Task 41', 'Waiting', 'Share the 5-email sequence', 'Jason/Derek approval', 'Jason', '2026-06-30', 'https://docs.google.com/document/d/xyz/edit'],
+  ['5', 'P0', 'M42 Umbrella', 'All businesses', 'Set up Google Business Profiles', 'Agent M42', 'Me', 'One-time', 'addresses', 'Blocked', 'Draft GBP', 'Derek input', 'Derek', '2026-06-30', ''],
+  ['52', 'P1', 'JRS', 'JRS', 'Schedule 48 posts', 'Agent M42', 'Shantal', 'One-time', 'assets', 'Done', 'Auto-publishing', '', 'Agent M42', '2026-06-30', ''],
+  ['', '', '', '', '', '', '', '', '', '', '', '', '', '', ''], // spacer row -> dropped
+]
+
+test('parseRows reads the real 14-col schema, ALL companies, real Status column', () => {
   const tasks = parseRows(rows)
-  expect(tasks).toHaveLength(2)
+  expect(tasks).toHaveLength(3) // spacer dropped; JRS + M42 Umbrella both kept (no company filter)
 
-  const jrs = tasks.find((t) => t.taskNum === '41')!
+  const jrs = tasks.find((t) => t.taskNum === '42')!
   expect(jrs.company).toBe('JRS')
-  expect(jrs.status).toBe('delivered_awaiting')
+  expect(jrs.status).toBe('delivered_awaiting') // "Waiting"
+  expect(jrs.description).toContain('Share the 5-email')
+  expect(jrs.dependency).toContain('Jason/Derek approval')
   expect(jrs.deliverableDriveUrl).toContain('docs.google.com')
-  expect(jrs.deliverableSlackUrl).toBeUndefined()
-  expect(jrs.lastUpdatedTs).toBeGreaterThan(0)
 
-  const br = tasks.find((t) => t.taskNum === '13')!
-  expect(br.status).toBe('blocked')
-  expect(br.deliverableSlackUrl).toContain('slack.com')
-  expect(br.deliverableDriveUrl).toBeUndefined()
+  const umbrella = tasks.find((t) => t.taskNum === '5')!
+  expect(umbrella.company).toBe('M42 Umbrella') // all companies now
+  expect(umbrella.status).toBe('blocked')
+
+  expect(tasks.find((t) => t.taskNum === '52')!.status).toBe('done')
 })
 
 test('parseRows returns empty for header-only or empty input', () => {
   expect(parseRows([])).toEqual([])
-  expect(parseRows([['Task#', 'Business']])).toEqual([])
+  expect(parseRows([HEADER])).toEqual([])
 })

@@ -1,5 +1,6 @@
 import { button, context, divider, header, plainInput, section, type Block, type HomeView, type ModalView } from '../blocks.js'
 import { STATUS_EMOJI, STATUS_LABEL, type Task } from '../model.js'
+import { clamp } from '../text.js'
 
 /** Pure: case-insensitive substring over title + description + deliverable title. */
 export function searchTasks(tasks: Task[], query: string): Task[] {
@@ -32,7 +33,7 @@ export function buildSearchResults(results: Task[], query: string): HomeView {
   } else {
     for (const t of results.slice(0, 20)) {
       blocks.push(
-        section(`*${t.title}*\n\`${t.company}-${t.taskNum}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}`, button('Open', `open_task:${t.taskNum}`)),
+        section(`*${clamp(t.title, 200)}*\n\`${t.company}-${t.taskNum}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}`, button('Open', `open_task:${t.taskNum}`)),
       )
     }
   }

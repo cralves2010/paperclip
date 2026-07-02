@@ -18,6 +18,7 @@ export function buildTaskModal(task: Task): ModalView {
   const urlButtons: Block[] = []
   if (task.deliverableDriveUrl) urlButtons.push(button('📄 Open in Drive', 'url_drive', { url: task.deliverableDriveUrl }))
   if (task.deliverableSlackUrl) urlButtons.push(button('💬 Open in Slack', 'url_slack', { url: task.deliverableSlackUrl }))
+  if (task.deliverableOtherUrl) urlButtons.push(button('🔗 Open link', 'url_other', { url: task.deliverableOtherUrl }))
   if (urlButtons.length > 0) blocks.push(actions(urlButtons))
   else blocks.push(context('_No deliverable linked yet._'))
 

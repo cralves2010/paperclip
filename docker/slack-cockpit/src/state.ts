@@ -21,9 +21,19 @@ const TTL_MS = 60_000
 export async function getTasks(cfg: Config, now: number = Date.now()): Promise<Task[]> {
   if (cfg.demo) return DEMO_TASKS
   if (cache && now - cache.at < TTL_MS) return cache.tasks
-  const tasks = await fetchTasks(cfg)
-  cache = { tasks, at: now }
-  return tasks
+  try {
+    const tasks = await fetchTasks(cfg)
+    // Don't cache a suspicious empty parse as success (header/tab/share bug):
+    // serve the last good cache if we have one instead of a false "all clear".
+    if (tasks.length === 0 && cache && cache.tasks.length > 0) return cache.tasks
+    if (tasks.length > 0) cache = { tasks, at: now }
+    return tasks
+  } catch (err) {
+    // Stale-while-error: keep showing the last good data through a transient
+    // outage; only surface an error when we have nothing to show.
+    if (cache && cache.tasks.length > 0) return cache.tasks
+    throw err
+  }
 }
 
 export function invalidate(): void {

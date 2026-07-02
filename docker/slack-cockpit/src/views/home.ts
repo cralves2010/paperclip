@@ -17,34 +17,39 @@ import {
   type ViewState,
 } from '../model.js'
 import { companyHealth, rollupCounts } from '../normalize.js'
-import { countLine } from '../text.js'
+import { clamp, countLine } from '../text.js'
 
 const HEALTH_DOT = { on_track: '🟢', at_risk: '🟡', blocked: '🔴' } as const
 const HEALTH_WORD = { on_track: 'On track', at_risk: 'At risk', blocked: 'Blocked' } as const
 const NEEDS_ORDER: Record<string, number> = { needs_you: 0, changes_requested: 1, delivered_awaiting: 2 }
 
+export interface HomeOpts {
+  demo?: boolean
+  syncedAt?: string
+}
+
 function needsYouRow(t: Task): Block {
   return section(
-    `*${t.title}*\n\`${t.company}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}`,
+    `*${clamp(t.title, 200)}*\n\`${t.company}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}`,
     button('Open', `open_task:${t.taskNum}`, { primary: true }),
   )
 }
 
-export function buildHomeView(tasks: Task[], _state: ViewState): HomeView {
+export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts = {}): HomeView {
   const companies = [...new Set(tasks.map((t) => t.company))].sort()
   const needsYou = tasks
     .filter((t) => NEEDS_YOU_STATUSES.includes(t.status))
     .sort((a, b) => (NEEDS_ORDER[a.status] ?? 9) - (NEEDS_ORDER[b.status] ?? 9))
 
+  const provenance = opts.demo
+    ? '🧪 *DEMO FIXTURE* · sample JRS+Brightly data (not live)'
+    : `🟢 *LIVE* · synced ${opts.syncedAt ?? 'just now'} · from M42 Central Task Tracker`
+
   const blocks: Block[] = [
     header('Agent M42 · Portfolio Cockpit'),
-    context('🔄 Synced from *M42 Central Task Tracker* · Legend: 🟢 On track · 🟡 At risk · 🔴 Blocked'),
+    context(`${provenance} · Legend: 🟢 On track · 🟡 At risk · 🔴 Blocked`),
     actions([
       button('🔄 Refresh', 'refresh_home'),
-      staticSelect('Company: All', 'filter_company', [
-        { text: 'All companies', value: 'all' },
-        ...companies.map((c) => ({ text: c, value: c })),
-      ]),
       staticSelect('Sort: Recent', 'sort', [
         { text: 'Most recent', value: 'recent' },
         { text: 'Status', value: 'status' },
@@ -76,7 +81,20 @@ export function buildHomeView(tasks: Task[], _state: ViewState): HomeView {
 
   blocks.push(
     divider(),
-    context('Read-only cockpit (v0) · Actions (approve · request changes · comment) coming in v1 · Data: M42 Central Task Tracker'),
+    context('Read-only cockpit (v0) · Actions (approve · request changes · comment) coming in v1'),
   )
   return { type: 'home', blocks }
+}
+
+/** Shown when the tracker can't be loaded, so the Home is never a silent blank. */
+export function buildErrorView(message = "Couldn't load the tracker right now"): HomeView {
+  return {
+    type: 'home',
+    blocks: [
+      header('Agent M42 · Portfolio Cockpit'),
+      section(`⚠️ *${message}.*\nThe Google Sheet connection may need attention (auth or sharing).`),
+      actions([button('🔄 Retry', 'refresh_home')]),
+      context('If this persists, ping Claudio.'),
+    ],
+  }
 }

@@ -1,11 +1,13 @@
 import type { CanonicalStatus, CompanyRollup, Task } from './model.js'
 
 /**
- * Map a free-text working-status cell into the fixed canonical vocabulary.
- * Priority-ordered: FIRST match wins. Order matters — "waiting on client to
- * approve delivery" must resolve to delivered_awaiting (it is awaiting the
- * human), NOT blocked, so the awaiting/approval check runs before the
- * "waiting on <entity>" blocked check.
+ * Map a free-text status cell into the fixed canonical vocabulary.
+ * Priority-ordered: FIRST match wins. Order is load-bearing:
+ *  - specific "awaiting/approve/deliver" beats "waiting on <entity>" (blocked)
+ *    so "waiting on client to approve delivery" -> delivered_awaiting;
+ *  - bare "Waiting" is checked AFTER blocked so "blocked — waiting on legal"
+ *    stays blocked, while a lone "Waiting" -> delivered_awaiting.
+ * Real live values seen: In Progress, Not Started, Blocked, Waiting, Done.
  */
 export function normalizeStatus(raw: string): CanonicalStatus {
   const s = (raw ?? '')
@@ -14,13 +16,14 @@ export function normalizeStatus(raw: string): CanonicalStatus {
     .replace(/\s+/g, ' ')
     .replace(/[.!·]+$/, '')
 
-  if (/chang|revis|rework/.test(s)) return 'changes_requested'
-  if (/(await|for review|review needed|pending approval|to approve|for approval|needs sign|ready for (derek|review)|delivered)/.test(s))
+  if (/\bchang|\brevis|rework/.test(s)) return 'changes_requested'
+  if (/await|for review|in review|review needed|pending approval|to approve|for approval|needs sign|ready for (derek|review)|delivered/.test(s))
     return 'delivered_awaiting'
-  if (/block|stuck|waiting on (legal|client|vendor|3rd|api|access|credential|attorney)|dependency/.test(s))
+  if (/\bblock|stuck|waiting on (legal|client|vendor|3rd|api|access|credential|attorney|carrier)|dependency/.test(s))
     return 'blocked'
   if (/need.*(input|decision|you|direction|answer)|your call|question for/.test(s)) return 'needs_you'
-  if (/(done|complete|approved|shipped|closed|published)/.test(s)) return 'done'
+  if (/\bdone\b|complete|approved|shipped|closed|published/.test(s)) return 'done'
+  if (/\bwaiting\b/.test(s)) return 'delivered_awaiting'
   if (/not started|backlog|queued|todo|planned/.test(s)) return 'queued'
   if (/in progress|wip|working|drafting|building|underway/.test(s)) return 'in_progress'
   return 'in_progress' // fallback (caller may flag for the Claudio-only tuning log)
