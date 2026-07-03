@@ -22,8 +22,8 @@ function colIndex(headers: string[], candidates: string[]): number {
 /**
  * Pure: map the real M42 tracker rows (header row + data rows) into Tasks.
  * Reads ALL companies (v0 decision 2026-07-02: show every Business / Section).
- * Status comes from a maintained "Working Status" column if present, else the
- * real "Status" column (the 06-30 sheet overhaul populates it for all rows).
+ * Status comes ONLY from the real "Status" column — a stray "Working Status"
+ * column must never silently shadow it (pivot Day-0 hardening, 2026-07-03).
  */
 export function parseRows(rows: string[][]): Task[] {
   if (!rows || rows.length < 2) return []
@@ -33,7 +33,7 @@ export function parseRows(rows: string[][]): Task[] {
   const iBiz = colIndex(headers, ['Business / Section', 'Business'])
   const iTitle = colIndex(headers, ['Task'])
   const iOwner = colIndex(headers, ['Owner'])
-  const iStatus = colIndex(headers, ['Working Status', 'Status'])
+  const iStatus = colIndex(headers, ['Status'])
   const iDesc = colIndex(headers, ['Next action', 'Next Action'])
   const iDep = colIndex(headers, ['Blocked on / waiting for', 'Dependency / Blocker', 'Dependency/Blocker'])
   const iDeliv = colIndex(headers, ['Deliverable Link'])
@@ -89,5 +89,9 @@ export async function fetchTasks(cfg: Config): Promise<Task[]> {
     spreadsheetId: cfg.sheetId,
     range: cfg.sheetRange,
   })
-  return parseRows((res.data.values as string[][]) ?? [])
+  const rows = (res.data.values as string[][]) ?? []
+  // Row-count visibility: a silent truncation (bounded range) or an empty
+  // parse must be diagnosable from `docker logs` alone.
+  console.log(`[cockpit] tracker fetch: ${rows.length} rows`)
+  return parseRows(rows)
 }

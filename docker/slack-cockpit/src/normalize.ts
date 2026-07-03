@@ -19,6 +19,10 @@ export function normalizeStatus(raw: string): CanonicalStatus {
   if (/\bchang|\brevis|rework/.test(s)) return 'changes_requested'
   if (/await|for review|in review|review needed|pending approval|to approve|for approval|needs sign|ready for (derek|review)|delivered/.test(s))
     return 'delivered_awaiting'
+  // A gate on Derek's own side (Derek/Jason/Eric) is "Needs you" on HIS
+  // cockpit, not an external block — must beat the generic block/waiting
+  // matchers below ("Blocked — waiting on Derek", "Waiting on Jason").
+  if (/\b(derek|jason|eric)\b/.test(s)) return 'needs_you'
   if (/\bblock|stuck|waiting on (legal|client|vendor|3rd|api|access|credential|attorney|carrier)|dependency/.test(s))
     return 'blocked'
   if (/need.*(input|decision|you|direction|answer)|your call|question for/.test(s)) return 'needs_you'

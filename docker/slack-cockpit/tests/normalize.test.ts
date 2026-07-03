@@ -8,6 +8,11 @@ describe('normalizeStatus (priority-ordered, first match wins)', () => {
     ['changes requested by Derek', 'changes_requested'],
     ['blocked — waiting on legal', 'blocked'],
     ['needs your decision on price', 'needs_you'],
+    // Derek-side gates beat generic block/waiting (pivot Day-0 hardening 2026-07-03)
+    ['Waiting on Derek', 'needs_you'],
+    ['Blocked — waiting on Derek pricing decision', 'needs_you'],
+    ['Blocked — Eric must confirm insurance', 'needs_you'],
+    ['waiting on Jason for webinar date', 'needs_you'],
     ['done / published', 'done'],
     ['Not Started', 'queued'],
     ['drafting the sequence', 'in_progress'],

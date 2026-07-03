@@ -29,7 +29,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     demo,
     googleSaJsonPath: demo ? opt(env, 'GOOGLE_SA_JSON') : req(env, 'GOOGLE_SA_JSON'),
     sheetId: demo ? opt(env, 'SHEET_ID') : req(env, 'SHEET_ID'),
-    sheetRange: opt(env, 'SHEET_RANGE', 'A1:Z200'),
+    // Unbounded rows by default: a bounded range silently truncates once the
+    // tracker outgrows it (pivot Day-0 hardening, 2026-07-03).
+    sheetRange: opt(env, 'SHEET_RANGE', 'A1:Z'),
     allowlist: req(env, 'COCKPIT_ALLOWLIST')
       .split(',')
       .map((s) => s.trim())
