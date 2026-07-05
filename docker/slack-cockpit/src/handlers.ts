@@ -6,6 +6,7 @@ import { commentCountByTask } from './sheets.js'
 import { appendComment, createTask } from './sheets-write.js'
 import { dmClaudio, commentDmText, createDmText } from './notify.js'
 import { section, type ModalView } from './blocks.js'
+import { taskRef } from './text.js'
 import { buildErrorView, buildHomeView } from './views/home.js'
 import { buildBoardView } from './views/board.js'
 import { buildTaskModal } from './views/taskModal.js'
@@ -305,11 +306,21 @@ export function registerHandlers(app: App, cfg: Config): void {
     }
     // Bust the read caches so the refreshed modal + Home reflect the new comment.
     invalidate()
+    // Resolve the task once — shared by the confirm modal (for the full
+    // `COMPANY-N` ref) and the best-effort DM below.
+    let task: Task | undefined
+    try {
+      const tasks = await getTasks(cfg)
+      task = tasks.find((t) => t.taskNum === taskNum)
+    } catch (err) {
+      logErr('comment_submit.lookup', err)
+    }
+    const ref = task ? taskRef(task) : `#${taskNum}`
     // Success: refresh the SAME view in place. From a task modal, show the
     // refreshed task detail (with the new comment); from Home, a short confirm.
     try {
       if (viewId) {
-        const view = origin === 'modal' ? (await taskModalFor(cfg, taskNum, body.user.id)) ?? commentPostedModal(taskNum) : commentPostedModal(taskNum)
+        const view = origin === 'modal' ? (await taskModalFor(cfg, taskNum, body.user.id)) ?? commentPostedModal(ref) : commentPostedModal(ref)
         await client.views.update({ view_id: viewId, view })
       }
     } catch (err) {
@@ -317,8 +328,6 @@ export function registerHandlers(app: App, cfg: Config): void {
     }
     // Best-effort DM to Claudio (never rolls back the write).
     try {
-      const tasks = await getTasks(cfg)
-      const task = tasks.find((t) => t.taskNum === taskNum)
       await dmClaudio(client, cfg, commentDmText({ sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', author, text: text.trim() }))
     } catch (err) {
       logErr('comment_submit.dm', err)
@@ -457,12 +466,12 @@ function workingModal(text: string): ModalView {
   }
 }
 
-function commentPostedModal(taskNum: string): ModalView {
+function commentPostedModal(ref: string): ModalView {
   return {
     type: 'modal',
     title: { type: 'plain_text', text: 'Comment posted' },
     close: { type: 'plain_text', text: 'Close' },
-    blocks: [section(`✅ *Comment added to #${taskNum}.*\nClaudio has been notified.`)],
+    blocks: [section(`✅ *Comment added to ${ref}.*\nClaudio has been notified.`)],
   }
 }
 

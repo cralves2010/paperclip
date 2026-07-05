@@ -24,6 +24,8 @@ const t = (o: Partial<Task>): Task => ({
 test('buildCommentModal: comment_submit, required multiline input, metadata round-trip', () => {
   const modal = buildCommentModal({ taskNum: '41', title: 'School sourcing', company: 'JRS', origin: 'modal' })
   expect(modal.callback_id).toBe('comment_submit')
+  // Title bar carries the full COMPANY-N ref (not a bare #N).
+  expect(modal.title.text).toBe('💬 JRS-41')
   const json = JSON.stringify(modal)
   expect(json).toContain('"block_id":"comment"')
   expect(json).toContain('"multiline":true')

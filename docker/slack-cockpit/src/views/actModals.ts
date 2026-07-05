@@ -64,7 +64,7 @@ export function buildCommentModal(args: {
   return {
     type: 'modal',
     callback_id: 'comment_submit',
-    title: { type: 'plain_text', text: truncateTitle(`💬 #${args.taskNum}`) },
+    title: { type: 'plain_text', text: truncateTitle(`💬 ${taskRef(args)}`) },
     submit: { type: 'plain_text', text: 'Post' },
     close: { type: 'plain_text', text: 'Cancel' },
     private_metadata: buildCommentMetadata({ taskNum: args.taskNum, origin: args.origin }),
