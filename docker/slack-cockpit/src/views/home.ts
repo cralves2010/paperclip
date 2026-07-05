@@ -15,17 +15,30 @@ import {
   type Task,
   type ViewState,
 } from '../model.js'
-import { companyHealth, rollupCounts } from '../normalize.js'
+import { companyHealth, normalizeActor, rollupCounts, type Actor } from '../normalize.js'
 import { clamp, countLine } from '../text.js'
 
-// App Home hard-caps at ~100 blocks. Portfolio Health emits 2 blocks/company, so
-// cap the number of companies rendered (Needs You + chrome ≈ 15 blocks; 40×2=80
-// leaves headroom). Overflow is summarized + reachable via the All-tasks board.
-const PORTFOLIO_CAP = 40
+// App Home hard-caps at ~100 blocks. Budget (worst case):
+//   chrome 4 + 3 actor groups × (header + 5 rows + context) = 21
+//   + Portfolio divider/header 2 + 30×2 companies + overflow context 1 + footer 2
+//   = 90 blocks. Overflow is summarized + reachable via the All-tasks board.
+// (Was 40 companies when Needs-You was a single 7-block group; the actor split
+// added up to 14 blocks, so the company cap drops to 30 to stay safely under.)
+const PORTFOLIO_CAP = 30
+const GROUP_CAP = 5 // max hero rows per actor group
 
 const HEALTH_DOT = { on_track: '🟢', at_risk: '🟡', blocked: '🔴' } as const
 const HEALTH_WORD = { on_track: 'On track', at_risk: 'At risk', blocked: 'Blocked' } as const
 const NEEDS_ORDER: Record<string, number> = { needs_you: 0, changes_requested: 1, delivered_awaiting: 2 }
+
+// Shared (not per-viewer) on purpose: transparency is the point — Derek sees
+// what's on Claudio, Claudio sees what's on Derek. "Needs the team" renders
+// only when non-empty; Derek/Claudio headers always render.
+const NEEDS_GROUPS: { actor: Actor; title: string; empty: string }[] = [
+  { actor: 'derek', title: '🔴 Needs Derek', empty: 'Nothing waiting on Derek right now.' },
+  { actor: 'claudio', title: '🟠 Needs Claudio', empty: 'Nothing waiting on Claudio right now.' },
+  { actor: 'team', title: '⚪ Needs the team', empty: '' },
+]
 
 export interface HomeOpts {
   demo?: boolean
@@ -62,15 +75,24 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
       button('➕ New task', 'open_create_task'),
     ]),
     divider(),
-    header('🔔 Needs You'),
   ]
 
-  if (needsYou.length === 0) {
-    blocks.push(section('🎉 *Nothing needs you right now.*'))
-    blocks.push(context("Everything's in progress or done — check Portfolio Health below."))
-  } else {
-    for (const t of needsYou.slice(0, 5)) blocks.push(needsYouRow(t, opts.commentCounts))
-    blocks.push(context(`Showing ${Math.min(needsYou.length, 5)} of ${needsYou.length}`))
+  // Group the act-needed heroes by whose move it is (Derek's Owner-next column).
+  const byActor = new Map<Actor, Task[]>()
+  for (const t of needsYou) {
+    const actor = normalizeActor(t.ownerNext)
+    byActor.set(actor, [...(byActor.get(actor) ?? []), t])
+  }
+  for (const g of NEEDS_GROUPS) {
+    const items = byActor.get(g.actor) ?? []
+    if (g.actor === 'team' && items.length === 0) continue
+    blocks.push(header(g.title))
+    if (items.length === 0) {
+      blocks.push(context(g.empty))
+    } else {
+      for (const t of items.slice(0, GROUP_CAP)) blocks.push(needsYouRow(t, opts.commentCounts))
+      blocks.push(context(`Showing ${Math.min(items.length, GROUP_CAP)} of ${items.length}`))
+    }
   }
 
   blocks.push(divider(), header('📊 Portfolio Health'))

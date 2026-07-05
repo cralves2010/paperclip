@@ -35,6 +35,8 @@ export function parseRows(rows: string[][]): Task[] {
   const iTitle = colIndex(headers, ['Task'])
   const iOwner = colIndex(headers, ['Owner'])
   const iStatus = colIndex(headers, ['Status'])
+  // Derek's column (col M): who the next move is on. The cockpit only READS it.
+  const iOwnerNext = colIndex(headers, ['Owner-next', 'Owner next'])
   const iPriority = colIndex(headers, ['Priority Tier', 'Priority'])
   const iDesc = colIndex(headers, ['Next action', 'Next Action'])
   const iDep = colIndex(headers, ['Blocked on / waiting for', 'Dependency / Blocker', 'Dependency/Blocker'])
@@ -66,6 +68,7 @@ export function parseRows(rows: string[][]): Task[] {
       // which would paint not-started tasks blue and flip health to green).
       status: rawStatus ? normalizeStatus(rawStatus) : 'queued',
       rawStatus,
+      ownerNext: cell(row, iOwnerNext) || undefined,
       priority: cell(row, iPriority) || undefined,
       deliverableDriveUrl: isDrive ? link : undefined,
       deliverableSlackUrl: isSlack ? link : undefined,

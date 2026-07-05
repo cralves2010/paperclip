@@ -45,6 +45,8 @@ export interface Task {
   owner: string
   status: CanonicalStatus
   rawStatus: string
+  /** Derek's "Owner-next" column (col M) — READ-ONLY for the cockpit, never written. */
+  ownerNext?: string
   priority?: string
   deliverableTitle?: string
   deliverableDriveUrl?: string

@@ -27,10 +27,12 @@ test('parseRows reads the real 14-col schema, ALL companies, real Status column'
   expect(jrs.description).toContain('Share the 5-email')
   expect(jrs.dependency).toContain('Jason/Derek approval')
   expect(jrs.deliverableDriveUrl).toContain('docs.google.com')
+  expect(jrs.ownerNext).toBe('Jason') // Derek's Owner-next column (read-only)
 
   const umbrella = tasks.find((t) => t.taskNum === '5')!
   expect(umbrella.company).toBe('M42 Umbrella') // all companies now
   expect(umbrella.status).toBe('blocked')
+  expect(umbrella.ownerNext).toBe('Derek')
 
   expect(tasks.find((t) => t.taskNum === '52')!.status).toBe('done')
 })

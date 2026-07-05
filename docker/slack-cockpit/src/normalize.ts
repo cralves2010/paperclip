@@ -33,6 +33,34 @@ export function normalizeStatus(raw: string): CanonicalStatus {
   return 'in_progress' // fallback (caller may flag for the Claudio-only tuning log)
 }
 
+/** Who a "Needs You" task is waiting on, derived from Derek's Owner-next column. */
+export type Actor = 'derek' | 'claudio' | 'team'
+
+// Derek's side of the table (Derek himself + his people).
+const DEREK_SIDE = /\b(derek|jason|eric|shantal|sydney)\b/
+// Derek CORE names — the tiebreaker for ambiguous cells like
+// "Claudio (Derek optional sign-off)": a core name present -> derek.
+const DEREK_CORE = /\b(derek|jason|eric)\b/
+// Our side: Claudio / "Me" / Agent M42 / "agente" (legacy PT cell values).
+const CLAUDIO_SIDE = /\bclaudio\b|\bme\b|agent\s*m42|\bagente\b/
+
+/**
+ * Map a free-text "Owner-next" cell to the actor whose move it is.
+ * Empty or unrecognized -> 'team' (never guess a person from noise).
+ * When BOTH sides appear (e.g. "Claudio (Derek optional sign-off)"), a Derek
+ * CORE name (Derek/Jason/Eric) wins; otherwise it stays on Claudio.
+ */
+export function normalizeActor(rawOwnerNext: string | undefined): Actor {
+  const s = (rawOwnerNext ?? '').toLowerCase().trim().replace(/\s+/g, ' ')
+  if (!s) return 'team'
+  const derek = DEREK_SIDE.test(s)
+  const claudio = CLAUDIO_SIDE.test(s)
+  if (derek && claudio) return DEREK_CORE.test(s) ? 'derek' : 'claudio'
+  if (derek) return 'derek'
+  if (claudio) return 'claudio'
+  return 'team'
+}
+
 export function companyHealth(tasks: Task[]): CompanyRollup['health'] {
   if (tasks.some((t) => t.status === 'blocked' || t.status === 'needs_you')) return 'blocked'
   if (tasks.some((t) => t.status === 'delivered_awaiting' || t.status === 'changes_requested'))

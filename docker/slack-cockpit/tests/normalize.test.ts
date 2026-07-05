@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { companyHealth, normalizeStatus, rollupCounts } from '../src/normalize.js'
+import { companyHealth, normalizeActor, normalizeStatus, rollupCounts } from '../src/normalize.js'
 import type { Task } from '../src/model.js'
 
 describe('normalizeStatus (priority-ordered, first match wins)', () => {
@@ -23,6 +23,37 @@ describe('normalizeStatus (priority-ordered, first match wins)', () => {
     ['Done', 'done'],
   ] as const)('%s -> %s', (raw, expected) => {
     expect(normalizeStatus(raw)).toBe(expected)
+  })
+})
+
+describe('normalizeActor (Owner-next -> Needs Derek / Needs Claudio / team)', () => {
+  test.each([
+    // Derek's side: Derek himself + his people
+    ['Derek', 'derek'],
+    ['Jason', 'derek'],
+    ['Eric', 'derek'],
+    ['Shantal', 'derek'],
+    ['Sydney', 'derek'],
+    // Our side
+    ['Claudio', 'claudio'],
+    ['Me', 'claudio'],
+    ['Agent M42', 'claudio'],
+    ['agente', 'claudio'],
+    // Ambiguous (both sides named): Derek CORE name (Derek/Jason/Eric) wins…
+    ['Claudio (Derek optional sign-off)', 'derek'],
+    ['Agent M42 (Jason optional sign-off)', 'derek'],
+    // …otherwise it stays on Claudio (Shantal/Sydney are not the tiebreaker)
+    ['Claudio (Shantal optional sign-off)', 'claudio'],
+    // Empty / unrecognized -> team (never guess a person from noise)
+    ['', 'team'],
+    ['   ', 'team'],
+    ['Outside vendor', 'team'],
+  ] as const)('%s -> %s', (raw, expected) => {
+    expect(normalizeActor(raw)).toBe(expected)
+  })
+
+  test('undefined Owner-next -> team', () => {
+    expect(normalizeActor(undefined)).toBe('team')
   })
 })
 
