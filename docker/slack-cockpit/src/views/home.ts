@@ -18,6 +18,11 @@ import {
 import { companyHealth, rollupCounts } from '../normalize.js'
 import { clamp, countLine } from '../text.js'
 
+// App Home hard-caps at ~100 blocks. Portfolio Health emits 2 blocks/company, so
+// cap the number of companies rendered (Needs You + chrome ≈ 15 blocks; 40×2=80
+// leaves headroom). Overflow is summarized + reachable via the All-tasks board.
+const PORTFOLIO_CAP = 40
+
 const HEALTH_DOT = { on_track: '🟢', at_risk: '🟡', blocked: '🔴' } as const
 const HEALTH_WORD = { on_track: 'On track', at_risk: 'At risk', blocked: 'Blocked' } as const
 const NEEDS_ORDER: Record<string, number> = { needs_you: 0, changes_requested: 1, delivered_awaiting: 2 }
@@ -69,12 +74,18 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
   }
 
   blocks.push(divider(), header('📊 Portfolio Health'))
-  for (const company of companies) {
+  const shownCompanies = companies.slice(0, PORTFOLIO_CAP)
+  for (const company of shownCompanies) {
     const ct = tasks.filter((t) => t.company === company)
     const health = companyHealth(ct)
     blocks.push(
       section(`${HEALTH_DOT[health]} *${company}* · ${HEALTH_WORD[health]}`, button('View →', `open_company:${company}`)),
       context(countLine(rollupCounts(ct))),
+    )
+  }
+  if (companies.length > shownCompanies.length) {
+    blocks.push(
+      context(`…and ${companies.length - shownCompanies.length} more companies — open 📋 All tasks to see everything.`),
     )
   }
 

@@ -31,6 +31,18 @@ test('home view pins Needs You above Portfolio Health', () => {
   expect(json.indexOf('Needs You')).toBeLessThan(json.indexOf('Portfolio Health'))
 })
 
+test('home view stays under the ~100-block App Home ceiling with many companies', () => {
+  // One task per company across 120 companies + several needs-you tasks.
+  const tasks: Task[] = Array.from({ length: 120 }, (_, i) =>
+    t({ taskNum: String(i + 1), company: `Co${i + 1}`, status: 'in_progress' }),
+  )
+  for (let i = 0; i < 8; i++) tasks.push(t({ taskNum: `n${i}`, company: `Co${i + 1}`, status: 'needs_you' }))
+  const view = buildHomeView(tasks, { kind: 'portfolio' })
+  expect(view.blocks.length).toBeLessThan(100)
+  // Overflow beyond the cap is summarized, not dropped silently.
+  expect(JSON.stringify(view)).toContain('more companies')
+})
+
 test('task modal clamps description and never emits a URL button without a URL', () => {
   const json = JSON.stringify(buildTaskModal(t({ description: 'x'.repeat(5000), deliverableDriveUrl: undefined })))
   expect(json).not.toContain('"url"')

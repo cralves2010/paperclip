@@ -73,6 +73,14 @@ test('buildCreateModal falls back to P0..P3 when no priorities present', () => {
   for (const p of ['P0', 'P1', 'P2', 'P3']) expect(json).toContain(p)
 })
 
+test('buildCreateModal never emits an empty business select (would crash views.open)', () => {
+  // Zero tasks -> zero derived businesses; the select must still carry options.
+  const modal = buildCreateModal([])
+  const businessBlock: any = modal.blocks.find((b: any) => b.block_id === 'business')
+  expect(businessBlock.element.type).toBe('static_select')
+  expect(businessBlock.element.options.length).toBeGreaterThan(0)
+})
+
 test('demo + denied modals carry the expected copy', () => {
   expect(JSON.stringify(buildDemoNoticeModal('comment'))).toContain('Demo mode')
   expect(JSON.stringify(buildDemoNoticeModal('create'))).toContain('Demo mode')

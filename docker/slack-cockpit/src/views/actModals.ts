@@ -47,6 +47,13 @@ export function attributeAuthor(userId: string, userName?: string): string {
 // ── View builders ───────────────────────────────────────────────────────────
 
 const PRIORITY_FALLBACK = ['P0', 'P1', 'P2', 'P3']
+// Last-resort business options so the New-task modal never opens with an EMPTY
+// static_select (Slack rejects an input static_select with zero options -> the
+// whole views.open fails). Only reached if the tracker parse returns zero
+// businesses (cold cache / transient empty read); normally derived from live
+// sheet values. Kept short; the operator picks the closest match and can fix it
+// in the sheet afterwards.
+const BUSINESS_FALLBACK = ['JRS', 'Brightly', 'M42 Holdings', '2020 Theory']
 
 export function buildCommentModal(args: {
   taskNum: string
@@ -76,7 +83,7 @@ export function buildCreateModal(tasks: Task[]): ModalView {
   const businesses = distinctBusinesses(tasks)
   const priorities = distinctPriorities(tasks)
   const priorityOptions = (priorities.length > 0 ? priorities : PRIORITY_FALLBACK).map((p) => ({ text: p, value: p }))
-  const businessOptions = businesses.map((b) => ({ text: b, value: b }))
+  const businessOptions = (businesses.length > 0 ? businesses : BUSINESS_FALLBACK).map((b) => ({ text: b, value: b }))
 
   return {
     type: 'modal',
