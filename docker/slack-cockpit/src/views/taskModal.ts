@@ -1,5 +1,5 @@
 import { actions, button, context, divider, section, sectionFields, type Block, type ModalView } from '../blocks.js'
-import { STATUS_EMOJI, STATUS_LABEL, type Comment, type Task } from '../model.js'
+import { STATUS_EMOJI, STATUS_LABEL, isDeliveredWithoutLink, type Comment, type Task } from '../model.js'
 import { normalizeActor } from '../normalize.js'
 import { clamp, taskRef, truncateTitle } from '../text.js'
 import { deriveAsk, STATUS_EXPLAINER, type ViewerActor } from './didactic.js'
@@ -68,6 +68,8 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
   if (task.deliverableSlackUrl) urlButtons.push(button('💬 Open in Slack', 'url_slack', { url: task.deliverableSlackUrl }))
   if (task.deliverableOtherUrl) urlButtons.push(button('🔗 Open link', 'url_other', { url: task.deliverableOtherUrl }))
   if (urlButtons.length > 0) blocks.push(actions(urlButtons))
+  else if (isDeliveredWithoutLink(task))
+    blocks.push(context(`⚠️ *Marked ${task.status === 'done' ? 'done' : 'delivered'}, but no access link is attached — Derek can’t open the deliverable yet.*`))
   else blocks.push(context('_No deliverable linked yet._'))
 
   // (9) Comments — count + up to the last 5, then an add button.

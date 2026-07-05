@@ -18,6 +18,7 @@ import {
 import {
   STATUS_EMOJI,
   STATUS_LABEL,
+  isDeliveredWithoutLink,
   type BoardSort,
   type StatusFilter,
   type Task,
@@ -70,6 +71,7 @@ export function taskCardRow(t: Task, opts: BoardOpts = {}): Block {
   ]
   if (count > 0) parts.push(`💬 ${count}`)
   if (url) parts.push('📎')
+  else if (isDeliveredWithoutLink(t)) parts.push('⚠️ no link')
   if (t.lastUpdated) parts.push(`⏱ ${t.lastUpdated}`)
   const meta = parts.join(' · ')
 

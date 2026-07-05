@@ -68,6 +68,21 @@ test('taskCardRow omits deliverable option + 💬 badge when absent, includes bo
   expect(rich.text.text).toContain('📎')
 })
 
+test('taskCardRow flags a delivered/done task with no link (⚠️ no link) instead of silence', () => {
+  const delivered: any = taskCardRow(t({ taskNum: '42', status: 'delivered_awaiting' }))
+  expect(delivered.text.text).toContain('⚠️')
+  expect(delivered.text.text).toMatch(/no link/i)
+
+  // Delivered WITH a link → 📎, never the warning.
+  const linked: any = taskCardRow(t({ taskNum: '43', status: 'done', deliverableDriveUrl: 'https://docs.google.com/x' }))
+  expect(linked.text.text).toContain('📎')
+  expect(linked.text.text).not.toContain('⚠️')
+
+  // Non-delivered task with no link stays silent (no warning, no 📎).
+  const inprog: any = taskCardRow(t({ taskNum: '44', status: 'in_progress' }))
+  expect(inprog.text.text).not.toContain('⚠️')
+})
+
 test('empty filter result shows the empty state + clear_filters', () => {
   const json = JSON.stringify(buildBoardView(many(5), board({ business: 'Nonexistent' })))
   expect(json).toContain('No tasks match these filters')

@@ -115,3 +115,24 @@ test('task modal: dependency heading flips to "What’s blocking it" when blocke
   expect(JSON.stringify(buildTaskModal(t({ dependency: 'need sign-off', status: 'blocked' })))).toContain('What’s blocking it')
   expect(JSON.stringify(buildTaskModal(t({ dependency: undefined })))).not.toContain('🚧')
 })
+
+test('task modal: a delivered/done task with NO link shows a LOUD missing-link warning, not the bland note', () => {
+  // The defect Claudio flagged: "Delivered – awaiting you" + "No deliverable linked yet" with no alarm.
+  const delivered = JSON.stringify(buildTaskModal(t({ status: 'delivered_awaiting', deliverableDriveUrl: undefined })))
+  expect(delivered).toContain('⚠️')
+  expect(delivered).toMatch(/no access link/i)
+  expect(delivered).not.toContain('No deliverable linked yet')
+
+  const done = JSON.stringify(buildTaskModal(t({ status: 'done', deliverableDriveUrl: undefined })))
+  expect(done).toMatch(/no access link/i)
+
+  // A non-delivered task with no link keeps the neutral note (no false alarm).
+  const queued = JSON.stringify(buildTaskModal(t({ status: 'queued', deliverableDriveUrl: undefined })))
+  expect(queued).toContain('No deliverable linked yet')
+  expect(queued).not.toMatch(/no access link/i)
+
+  // A delivered task WITH a link shows the button and no warning.
+  const linked = JSON.stringify(buildTaskModal(t({ status: 'done', deliverableDriveUrl: 'https://docs.google.com/x' })))
+  expect(linked).toContain('url_drive')
+  expect(linked).not.toMatch(/no access link/i)
+})
