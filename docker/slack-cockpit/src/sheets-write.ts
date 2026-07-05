@@ -6,8 +6,9 @@
 // Invariants (mirroring tools/tracker.mjs):
 //  - append-only for new rows (values.append + INSERT_ROWS); NEVER values.update
 //    over an existing data row.
-//  - Task # is minted by re-reading the tracker AT WRITE TIME (concurrent-create
-//    defense) + an echo-verify of the append response.
+//  - Task # is minted by re-reading the tracker AT WRITE TIME, echo-verified
+//    against the append response, then re-read AFTER the append to detect a
+//    concurrent-create duplicate (nextTaskNum is a read-then-append TOCTOU).
 //  - Only one retry on HTTP 429; no backoff infrastructure (2-user scale).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -113,13 +114,7 @@ function echoRow(appendRes: any): { updatedRange?: string; values?: string[][] }
 }
 
 /** Compare the append echo against what we intended; return a warning string or undefined. */
-function verifyAppend(
-  appendRes: any,
-  headers: string[],
-  taskNum: number,
-  title: string,
-  priorRows: string[][],
-): string | undefined {
+function verifyEcho(appendRes: any, headers: string[], taskNum: number, title: string): string | undefined {
   const warnings: string[] = []
   const echo = echoRow(appendRes)
   const iNum = colIndex(headers, ['Task #', 'Task#'])
@@ -131,12 +126,20 @@ function verifyAppend(
     if (gotNum !== String(taskNum)) warnings.push(`row landed with Task# "${gotNum}" (expected ${taskNum})`)
     if (gotTitle !== title) warnings.push('row landed with an unexpected title')
   }
-  // Duplicate-Task# scan against the pre-write snapshot (concurrent create).
-  if (iNum >= 0) {
-    const dup = priorRows.slice(1).some((rr) => (rr[iNum] ?? '').toString().trim() === String(taskNum))
-    if (dup) warnings.push(`Task# ${taskNum} already existed before append (possible concurrent create)`)
-  }
   return warnings.length ? warnings.join('; ') : undefined
+}
+
+/** Count data rows whose Task # cell equals `taskNum` (post-append duplicate scan). */
+export function countTaskNum(rows: string[][], taskNum: number): number {
+  if (!rows || rows.length === 0) return 0
+  const headers = rows[0].map((h) => (h ?? '').trim())
+  const iNum = colIndex(headers, ['Task #', 'Task#'])
+  if (iNum < 0) return 0
+  let n = 0
+  for (const row of rows.slice(1)) {
+    if ((row[iNum] ?? '').toString().trim() === String(taskNum)) n++
+  }
+  return n
 }
 
 // ── I/O wrappers (injected-client; real client used by default) ─────────────
@@ -212,6 +215,12 @@ export async function createTask(
     throw new Error('tracker came back empty — refusing to append (would corrupt headers)')
   }
   const headers = rows[0].map((h) => (h ?? '').trim())
+  // Header-sanity gate (mirrors tools/tracker.mjs load()): if the tracker layout
+  // shifted so the key columns are unrecognizable, refuse rather than append a
+  // mis-numbered / field-dropped junk row into Derek's source of truth.
+  if (colIndex(headers, ['Task #', 'Task#']) < 0 || colIndex(headers, ['Status']) < 0) {
+    throw new Error('tracker layout changed (Task #/Status columns not found) — refusing to append')
+  }
   const taskNum = nextTaskNum(rows)
   const row = buildTaskRow(headers, { ...input, taskNum })
   const appendRes = await withRetry(() =>
@@ -224,6 +233,28 @@ export async function createTask(
       requestBody: { values: [row] },
     }),
   )
-  const warning = verifyAppend(appendRes, headers, taskNum, input.title, rows)
-  return { taskNum, warning }
+  const warnings: string[] = []
+  const echoWarn = verifyEcho(appendRes, headers, taskNum, input.title)
+  if (echoWarn) warnings.push(echoWarn)
+  // Post-append duplicate scan: nextTaskNum() is a read-then-append TOCTOU, so
+  // two racing creates can both mint the same max+1. A duplicate Task # would
+  // jam tools/tracker.mjs findRow() (it hard-dies on any number appearing >1×)
+  // for the live Claude Code windows, so re-read AFTER the append and confirm
+  // the minted number occurs exactly once. Best-effort: a failed re-read must
+  // never fail an already-successful append.
+  try {
+    const postRes = await client.spreadsheets.values.get({
+      spreadsheetId: cfg.sheetId,
+      range: `'${cfg.trackerTab}'!A1:Z`,
+    })
+    const postRows = (postRes?.data?.values ?? []) as string[][]
+    if (countTaskNum(postRows, taskNum) > 1) {
+      warnings.push(
+        `Task# ${taskNum} appears more than once after append — likely a concurrent create; de-duplicate it in the sheet before the Claude Code windows touch that number`,
+      )
+    }
+  } catch {
+    // swallow: the append succeeded; a verification read failure is not fatal
+  }
+  return { taskNum, warning: warnings.length ? warnings.join('; ') : undefined }
 }

@@ -2,6 +2,7 @@ import { expect, test, vi } from 'vitest'
 import {
   appendComment,
   buildTaskRow,
+  countTaskNum,
   createTask,
   ensureCommentsTab,
   nextTaskNum,
@@ -155,7 +156,7 @@ test('createTask reads then appends one row to the tracker tab; mints max+1', as
   const res = await createTask(cfg(), { business: 'JRS', priority: 'P1', title: 'New task' }, client)
   expect(res.taskNum).toBe(31)
   expect(res.warning).toBeUndefined()
-  expect(calls.get).toHaveBeenCalledTimes(1) // read at write time
+  expect(calls.get).toHaveBeenCalledTimes(2) // read at write time + post-append duplicate scan
   expect(calls.append).toHaveBeenCalledTimes(1)
   const p = calls.append.mock.calls[0][0]
   expect(p.range).toMatch(/^'Tracker'!A1$/)
@@ -171,6 +172,65 @@ test('createTask surfaces a warning when the echo Task# mismatches', async () =>
   const res = await createTask(cfg(), { business: 'JRS', priority: 'P1', title: 'New task' }, client)
   expect(res.taskNum).toBe(13)
   expect(res.warning).toMatch(/Task#/)
+})
+
+test('countTaskNum counts data rows matching a Task#, tolerant of blanks / whitespace', () => {
+  const rows = [
+    HEADER,
+    ['31', '', 'JRS', '', 'a', '', '', '', '', '', '', '', '', '', ''],
+    [' 31 ', '', 'JRS', '', 'b', '', '', '', '', '', '', '', '', '', ''], // whitespace -> still matches
+    ['12', '', 'JRS', '', 'c', '', '', '', '', '', '', '', '', '', ''],
+  ]
+  expect(countTaskNum(rows, 31)).toBe(2)
+  expect(countTaskNum(rows, 12)).toBe(1)
+  expect(countTaskNum(rows, 99)).toBe(0)
+})
+
+test('createTask warns when the post-append re-read finds a duplicate Task# (concurrent create)', async () => {
+  const priorRows = [HEADER, ['30', '', 'JRS', '', 'a', '', '', '', '', '', '', '', '', '', '']]
+  // Simulate a racing sibling create: the POST-append re-read returns TWO rows
+  // carrying the minted number 31.
+  const postRows = [
+    HEADER,
+    ['30', '', 'JRS', '', 'a', '', '', '', '', '', '', '', '', '', ''],
+    ['31', '', 'JRS', '', 'mine', '', '', '', '', '', '', '', '', '', ''],
+    ['31', '', 'Brightly', '', 'theirs', '', '', '', '', '', '', '', '', '', ''],
+  ]
+  let getCall = 0
+  const calls = { append: vi.fn() }
+  const client: SheetsClient = {
+    spreadsheets: {
+      get: () => Promise.resolve({ data: { sheets: [{ properties: { title: 'Tracker' } }] } }),
+      batchUpdate: () => Promise.resolve({ data: {} }),
+      values: {
+        get: () => {
+          getCall += 1
+          return Promise.resolve({ data: { values: getCall === 1 ? priorRows : postRows } })
+        },
+        append: (p: any) => {
+          calls.append(p)
+          return Promise.resolve({ data: { updatedData: { values: [buildStubRow('31', 'mine')] } } })
+        },
+        update: () => Promise.resolve({ data: {} }),
+      },
+    },
+  }
+  const res = await createTask(cfg(), { business: 'JRS', priority: 'P1', title: 'mine' }, client)
+  expect(res.taskNum).toBe(31)
+  expect(res.warning).toMatch(/more than once/)
+  expect(calls.append).toHaveBeenCalledTimes(1)
+})
+
+test('createTask refuses to append when the header layout is unrecognizable', async () => {
+  const trackerRows = [
+    ['Col A', 'Col B', 'Col C'], // no Task # / Status columns
+    ['x', 'y', 'z'],
+  ]
+  const { client, calls } = stubClient({ trackerRows })
+  await expect(createTask(cfg(), { business: 'JRS', priority: 'P1', title: 'nope' }, client)).rejects.toThrow(
+    /layout changed/,
+  )
+  expect(calls.append).not.toHaveBeenCalled() // never wrote a junk row
 })
 
 // Helper: a full-width echo row with a given Task# + Title in the real columns.
