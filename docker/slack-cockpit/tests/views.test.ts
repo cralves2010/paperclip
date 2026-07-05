@@ -83,3 +83,35 @@ test('task modal clamps description and never emits a URL button without a URL',
   expect(json).not.toContain('"url"')
   expect(json.length).toBeLessThan(20000)
 })
+
+test('task modal: kicker shows Task ref, hero + "Where it stands" always render', () => {
+  const json = JSON.stringify(buildTaskModal(t({ taskNum: '43', company: 'JRS', status: 'needs_you', ownerNext: 'Derek' }), [], 'derek'))
+  expect(json).toContain('JRS-43') // kicker
+  expect(json).toContain('Where it stands')
+  expect(json).toContain('A person needs to weigh in before it can move.') // STATUS_EXPLAINER
+  expect(json).toContain('🟠 Your move') // deriveAsk hero (viewer IS Derek)
+  expect(json).toContain('Whose move') // facts grid
+  expect(json).not.toContain('Task ID') // duplicate grid field dropped
+})
+
+test('task modal hero is viewer-aware for the same task', () => {
+  const task = t({ status: 'delivered_awaiting', ownerNext: 'Derek' })
+  expect(JSON.stringify(buildTaskModal(task, [], 'derek'))).toContain('🟡 Your move')
+  const observer = JSON.stringify(buildTaskModal(task, [], 'observer'))
+  expect(observer).toContain('Waiting on Derek')
+  expect(observer).not.toContain('Your move')
+})
+
+test('task modal: "What this is" renders only with a description, as a blockquote', () => {
+  const withDesc = JSON.stringify(buildTaskModal(t({ description: 'line one\nline two' })))
+  expect(withDesc).toContain('📋 What this is')
+  expect(withDesc).toContain('> line one')
+  expect(withDesc).toContain('working notes')
+  expect(JSON.stringify(buildTaskModal(t({ description: undefined })))).not.toContain('What this is')
+})
+
+test('task modal: dependency heading flips to "What’s blocking it" when blocked', () => {
+  expect(JSON.stringify(buildTaskModal(t({ dependency: 'need sign-off', status: 'in_progress' })))).toContain('What’s left')
+  expect(JSON.stringify(buildTaskModal(t({ dependency: 'need sign-off', status: 'blocked' })))).toContain('What’s blocking it')
+  expect(JSON.stringify(buildTaskModal(t({ dependency: undefined })))).not.toContain('🚧')
+})

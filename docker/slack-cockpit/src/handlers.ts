@@ -9,6 +9,7 @@ import { section, type ModalView } from './blocks.js'
 import { buildErrorView, buildHomeView } from './views/home.js'
 import { buildBoardView } from './views/board.js'
 import { buildTaskModal } from './views/taskModal.js'
+import { resolveViewer } from './views/didactic.js'
 import { buildSearchModal, buildSearchResults, searchTasks } from './views/search.js'
 import {
   attributeAuthor,
@@ -65,10 +66,10 @@ async function publishForUser(client: any, cfg: Config, userId: string): Promise
 }
 
 /** Build a task modal for `taskNum` with its comments; returns null if not found. */
-async function taskModalFor(cfg: Config, taskNum: string): Promise<ModalView | null> {
+async function taskModalFor(cfg: Config, taskNum: string, userId: string): Promise<ModalView | null> {
   const [tasks, comments] = await Promise.all([getTasks(cfg), getComments(cfg)])
   const task = tasks.find((t) => t.taskNum === taskNum)
-  return task ? buildTaskModal(task, comments) : null
+  return task ? buildTaskModal(task, comments, resolveViewer(userId, cfg)) : null
 }
 
 export function registerHandlers(app: App, cfg: Config): void {
@@ -171,7 +172,7 @@ export function registerHandlers(app: App, cfg: Config): void {
   app.action(/^open_task:/, async ({ ack, action, body, client }: any) => {
     await ack()
     const taskNum = String(action.action_id).split(':')[1]
-    await openTaskModal(client, cfg, body.trigger_id, taskNum)
+    await openTaskModal(client, cfg, body.trigger_id, taskNum, body.user.id)
   })
 
   // ── Board card overflow menu ──────────────────────────────────────────────
@@ -184,7 +185,7 @@ export function registerHandlers(app: App, cfg: Config): void {
       const value: string = action.selected_option?.value ?? ''
       const [kind, taskNum] = value.split(':')
       if (kind === 'open') {
-        await openTaskModal(client, cfg, body.trigger_id, taskNum)
+        await openTaskModal(client, cfg, body.trigger_id, taskNum, body.user.id)
       } else if (kind === 'comment') {
         await openCommentModal(client, cfg, body.trigger_id, taskNum, 'home', false)
       }
@@ -308,7 +309,7 @@ export function registerHandlers(app: App, cfg: Config): void {
     // refreshed task detail (with the new comment); from Home, a short confirm.
     try {
       if (viewId) {
-        const view = origin === 'modal' ? (await taskModalFor(cfg, taskNum)) ?? commentPostedModal(taskNum) : commentPostedModal(taskNum)
+        const view = origin === 'modal' ? (await taskModalFor(cfg, taskNum, body.user.id)) ?? commentPostedModal(taskNum) : commentPostedModal(taskNum)
         await client.views.update({ view_id: viewId, view })
       }
     } catch (err) {
@@ -379,7 +380,7 @@ export function registerHandlers(app: App, cfg: Config): void {
  * a loading modal from the fresh trigger_id FIRST (no awaited I/O), then hydrate
  * the SAME view id with the resolved task detail.
  */
-async function openTaskModal(client: any, cfg: Config, triggerId: string, taskNum: string): Promise<void> {
+async function openTaskModal(client: any, cfg: Config, triggerId: string, taskNum: string, userId: string): Promise<void> {
   let opened
   try {
     opened = await client.views.open({ trigger_id: triggerId, view: loadingModal('⏳ Loading task…') })
@@ -388,7 +389,7 @@ async function openTaskModal(client: any, cfg: Config, triggerId: string, taskNu
     return
   }
   try {
-    const modal = await taskModalFor(cfg, taskNum)
+    const modal = await taskModalFor(cfg, taskNum, userId)
     const viewId = opened?.view?.id
     if (viewId) await client.views.update({ view_id: viewId, view: modal ?? buildActErrorModal(`Task ${taskNum} not found.`) })
   } catch (err) {
