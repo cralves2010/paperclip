@@ -14,10 +14,14 @@
 //        [--link <url>] [--next "<one Derek-readable sentence>"]
 //        (--sop <vault-path> | --no-sop "<reason>")
 //   node tracker.mjs done <task#> --claudio [--link <url>]   Done is Claudio-only
+//   node tracker.mjs link <task#> --url <url> [--force]      attach/backfill Deliverable Link ONLY (no status change)
 //
 // Hard rules ENFORCED HERE (not prose):
 //  - single-row writes only; whitelist J(Status) K(Next action) N(Last updated)
 //    O(Claimed By) P(Claim TS) Q(Deliverable Link) — columns A-I and M are never touched
+//  - `link` writes ONLY Q (Deliverable Link) — never status/date/claim — so a
+//    deliverable can be attached to a Waiting/blocked/drafted task without
+//    misstating its state; refuses to overwrite an existing link without --force
 //  - exact status vocabulary (the cockpit's normalizeStatus mislabels anything else)
 //  - row located by Task# AT WRITE TIME + post-write Task#-echo verify (row-shift defense)
 //  - no auto-steal: a foreign claim needs --force, and --force is only used after Claudio's OK
@@ -171,11 +175,11 @@ function claimAge(tsStr) {
 const { cmd, pos, flags } = parseArgs(process.argv.slice(2))
 
 if (!cmd || flags.help) {
-  console.log('usage: tracker.mjs init|claims|row|claim|heartbeat|release|done  (see file header)')
+  console.log('usage: tracker.mjs init|claims|row|claim|heartbeat|release|done|link  (see file header)')
   process.exit(0)
 }
 
-const needsWrite = ['init', 'claim', 'heartbeat', 'release', 'done'].includes(cmd)
+const needsWrite = ['init', 'claim', 'heartbeat', 'release', 'done', 'link'].includes(cmd)
 const sheets = await sheetsClient(needsWrite)
 const data = await load(sheets)
 
@@ -301,6 +305,26 @@ if (cmd === 'done') {
   await verifyRow(sheets, data, r, taskNum, '')
   audit({ cmd, taskNum, link: flags.link || null })
   console.log(`✓ #${taskNum} marked Done`)
+  process.exit(0)
+}
+
+if (cmd === 'link') {
+  // Attach/backfill ONLY the Deliverable Link (col Q). Never touches status/date/
+  // claim, so a link can be added to a Waiting/blocked/drafted task without
+  // misstating its state. Refuses to clobber a different existing link w/o --force.
+  if (data.cols.link < 0) die('Deliverable Link column missing — run: tracker.mjs init')
+  const url = flags.url
+  if (!url || !/^https?:\/\//.test(String(url))) die('link needs --url <full http(s) URL>')
+  const existing = ((data.rows[r][data.cols.link] ?? '') + '').trim()
+  if (existing && existing !== String(url) && !flags.force)
+    die(`#${taskNum} already has a link:\n  ${existing}\nRe-run with --force to overwrite.`)
+  await writeCell(sheets, r, data.cols.link, String(url))
+  await verifyRow(sheets, data, r, taskNum)
+  // `overwrote` only when a DIFFERENT prior link was replaced — an idempotent
+  // re-write of the same URL must not log a phantom overwrite.
+  const overwrote = existing && existing !== String(url) ? existing : null
+  audit({ cmd, taskNum, url: String(url), overwrote, forced: !!flags.force })
+  console.log(`✓ linked #${taskNum} -> ${url}`)
   process.exit(0)
 }
 
