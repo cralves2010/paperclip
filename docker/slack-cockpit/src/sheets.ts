@@ -1,12 +1,13 @@
 import { google } from 'googleapis'
 import type { Config } from './config.js'
-import type { Task } from './model.js'
+import type { Comment, Task } from './model.js'
 import { normalizeStatus } from './normalize.js'
 
 // Resolve a column by ANY of several candidate header names, whitespace- and
 // case-insensitive. The live sheet uses spaced headers ("Business / Section",
 // "Task #", "Dependency / Blocker") — exact matching silently fails.
-function colIndex(headers: string[], candidates: string[]): number {
+// Exported so the write layer (sheets-write.ts) reuses the SAME tolerant mapper.
+export function colIndex(headers: string[], candidates: string[]): number {
   const norm = (s: string): string => (s ?? '').replace(/\s+/g, '').toLowerCase()
   const normed = headers.map(norm)
   // Candidate PRIORITY (not sheet order): try each candidate in turn so a
@@ -34,6 +35,7 @@ export function parseRows(rows: string[][]): Task[] {
   const iTitle = colIndex(headers, ['Task'])
   const iOwner = colIndex(headers, ['Owner'])
   const iStatus = colIndex(headers, ['Status'])
+  const iPriority = colIndex(headers, ['Priority Tier', 'Priority'])
   const iDesc = colIndex(headers, ['Next action', 'Next Action'])
   const iDep = colIndex(headers, ['Blocked on / waiting for', 'Dependency / Blocker', 'Dependency/Blocker'])
   const iDeliv = colIndex(headers, ['Deliverable Link'])
@@ -64,6 +66,7 @@ export function parseRows(rows: string[][]): Task[] {
       // which would paint not-started tasks blue and flip health to green).
       status: rawStatus ? normalizeStatus(rawStatus) : 'queued',
       rawStatus,
+      priority: cell(row, iPriority) || undefined,
       deliverableDriveUrl: isDrive ? link : undefined,
       deliverableSlackUrl: isSlack ? link : undefined,
       // A valid http(s) link that is neither Drive nor Slack still renders a
@@ -94,4 +97,63 @@ export async function fetchTasks(cfg: Config): Promise<Task[]> {
   // parse must be diagnosable from `docker logs` alone.
   console.log(`[cockpit] tracker fetch: ${rows.length} rows`)
   return parseRows(rows)
+}
+
+/**
+ * Pure: map the Comments tab rows (header row + data rows) into Comments.
+ * Header A–E: Timestamp | Task # | Author | Comment | Seen. Tolerant of
+ * whitespace-y headers via colIndex; rows with an empty Task # are dropped.
+ */
+export function parseComments(rows: string[][]): Comment[] {
+  if (!rows || rows.length < 2) return []
+  const headers = rows[0].map((h) => (h ?? '').trim())
+  const iTs = colIndex(headers, ['Timestamp', 'Time'])
+  const iTask = colIndex(headers, ['Task #', 'Task#', 'Task'])
+  const iAuthor = colIndex(headers, ['Author'])
+  const iText = colIndex(headers, ['Comment', 'Text'])
+  const iSeen = colIndex(headers, ['Seen'])
+  const cell = (row: string[], i: number): string => (i >= 0 ? (row[i] ?? '').trim() : '')
+  const out: Comment[] = []
+  for (const row of rows.slice(1)) {
+    const taskNum = cell(row, iTask)
+    if (!taskNum) continue
+    out.push({
+      timestamp: cell(row, iTs),
+      taskNum,
+      author: cell(row, iAuthor),
+      text: cell(row, iText),
+      seen: cell(row, iSeen),
+    })
+  }
+  return out
+}
+
+/** Pure: count comments per Task # (keyed by the raw taskNum string). */
+export function commentCountByTask(comments: Comment[]): Map<string, number> {
+  const m = new Map<string, number>()
+  for (const c of comments) m.set(c.taskNum, (m.get(c.taskNum) ?? 0) + 1)
+  return m
+}
+
+/**
+ * I/O: read the Comments tab (read-only client). A missing tab (never created
+ * yet) must NEVER fail a Home render — swallow to [].
+ */
+export async function fetchComments(cfg: Config): Promise<Comment[]> {
+  const auth = new google.auth.GoogleAuth({
+    keyFile: cfg.googleSaJsonPath,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+  })
+  const sheets = google.sheets({ version: 'v4', auth })
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: cfg.sheetId,
+      range: `'${cfg.commentsTab}'!A1:E`,
+    })
+    const rows = (res.data.values as string[][]) ?? []
+    return parseComments(rows)
+  } catch {
+    // Tab absent / not shared yet — comments are an additive layer, not required.
+    return []
+  }
 }

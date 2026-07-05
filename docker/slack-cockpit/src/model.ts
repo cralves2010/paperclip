@@ -45,6 +45,7 @@ export interface Task {
   owner: string
   status: CanonicalStatus
   rawStatus: string
+  priority?: string
   deliverableTitle?: string
   deliverableDriveUrl?: string
   deliverableSlackUrl?: string
@@ -55,6 +56,15 @@ export interface Task {
   lastUpdatedTs?: number
 }
 
+/** A comment on a task, stored in the Sheet's "Comments" tab (A–E schema). */
+export interface Comment {
+  timestamp: string
+  taskNum: string
+  author: string
+  text: string
+  seen: string
+}
+
 export interface CompanyRollup {
   company: string
   health: 'on_track' | 'at_risk' | 'blocked'
@@ -63,6 +73,13 @@ export interface CompanyRollup {
 
 export type SortKey = 'recent' | 'status' | 'title'
 export type StatusFilter = CanonicalStatus | 'all' | 'open'
+export type BoardSort = 'updated' | 'priority' | 'task_num'
+
+export interface BoardFilters {
+  business?: string
+  status?: StatusFilter
+  priority?: string
+}
 
 export type ViewState =
   | { kind: 'portfolio'; sort?: SortKey }
