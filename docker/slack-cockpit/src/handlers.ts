@@ -170,13 +170,8 @@ export function registerHandlers(app: App, cfg: Config): void {
 
   app.action(/^open_task:/, async ({ ack, action, body, client }: any) => {
     await ack()
-    try {
-      const taskNum = String(action.action_id).split(':')[1]
-      const modal = await taskModalFor(cfg, taskNum)
-      if (modal) await client.views.open({ trigger_id: body.trigger_id, view: modal })
-    } catch (err) {
-      logErr('open_task', err)
-    }
+    const taskNum = String(action.action_id).split(':')[1]
+    await openTaskModal(client, cfg, body.trigger_id, taskNum)
   })
 
   // ── Board card overflow menu ──────────────────────────────────────────────
@@ -189,8 +184,7 @@ export function registerHandlers(app: App, cfg: Config): void {
       const value: string = action.selected_option?.value ?? ''
       const [kind, taskNum] = value.split(':')
       if (kind === 'open') {
-        const modal = await taskModalFor(cfg, taskNum)
-        if (modal) await client.views.open({ trigger_id: body.trigger_id, view: modal })
+        await openTaskModal(client, cfg, body.trigger_id, taskNum)
       } else if (kind === 'comment') {
         await openCommentModal(client, cfg, body.trigger_id, taskNum, 'home', false)
       }
@@ -226,6 +220,12 @@ export function registerHandlers(app: App, cfg: Config): void {
   })
 
   app.view('search_submit', async ({ ack, view, body, client }: any) => {
+    // Defense-in-depth: gate uniformly with the other act handlers. (publishForUser
+    // already re-checks the allowlist, but keep every handler self-guarding.)
+    if (!guard(body.user.id)) {
+      await ack({ response_action: 'update', view: buildDeniedModal() })
+      return
+    }
     const query = (view.state.values?.q?.search_query?.value ?? '').trim()
     if (!query) {
       await ack({ response_action: 'errors', errors: { q: 'Type something to search.' } })
@@ -240,12 +240,23 @@ export function registerHandlers(app: App, cfg: Config): void {
 
   app.action('open_create_task', async ({ ack, body, client }: any) => {
     await ack()
+    if (!guard(body.user.id)) return
+    // Open a loading modal from the fresh trigger_id FIRST (no awaited I/O in
+    // between, which could blow the ~3s trigger_id window on a cold cache), then
+    // hydrate with the derived business/priority options.
+    let opened
     try {
-      if (!guard(body.user.id)) return
-      const tasks = await getTasks(cfg)
-      await client.views.open({ trigger_id: body.trigger_id, view: buildCreateModal(tasks) })
+      opened = await client.views.open({ trigger_id: body.trigger_id, view: loadingModal('⏳ Loading…') })
     } catch (err) {
-      logErr('open_create_task', err)
+      logErr('open_create_task.open', err)
+      return
+    }
+    try {
+      const tasks = await getTasks(cfg)
+      const viewId = opened?.view?.id
+      if (viewId) await client.views.update({ view_id: viewId, view: buildCreateModal(tasks) })
+    } catch (err) {
+      logErr('open_create_task.hydrate', err)
     }
   })
 
@@ -273,15 +284,36 @@ export function registerHandlers(app: App, cfg: Config): void {
       await ack({ response_action: 'update', view: buildDemoNoticeModal('comment') })
       return
     }
+    // Ack FIRST (updating the current view in place) so the multi-round-trip
+    // Sheets write never races the hard 3s view_submission deadline. We then
+    // update the SAME view id with the result — an empty ack on a pushed modal
+    // tears the stack down, so views.update on root_view_id would no-op.
+    await ack({ response_action: 'update', view: workingModal('💬 Posting comment…') })
+    const viewId: string | undefined = body.view?.id
     const author = authorFor(body)
     try {
       await appendComment(cfg, { taskNum, author, text: text.trim() }, undefined)
     } catch (err) {
       logErr('comment_submit.append', err)
-      await ack({ response_action: 'errors', errors: { comment: "Couldn't save — tracker unreachable. Try again or ping Claudio." } })
+      if (viewId) {
+        await client.views
+          .update({ view_id: viewId, view: buildActErrorModal("Couldn't save — tracker unreachable. Try again or ping Claudio.") })
+          .catch((e: any) => logErr('comment_submit.errUpdate', e))
+      }
       return
     }
-    await ack()
+    // Bust the read caches so the refreshed modal + Home reflect the new comment.
+    invalidate()
+    // Success: refresh the SAME view in place. From a task modal, show the
+    // refreshed task detail (with the new comment); from Home, a short confirm.
+    try {
+      if (viewId) {
+        const view = origin === 'modal' ? (await taskModalFor(cfg, taskNum)) ?? commentPostedModal(taskNum) : commentPostedModal(taskNum)
+        await client.views.update({ view_id: viewId, view })
+      }
+    } catch (err) {
+      logErr('comment_submit.refresh', err)
+    }
     // Best-effort DM to Claudio (never rolls back the write).
     try {
       const tasks = await getTasks(cfg)
@@ -290,17 +322,7 @@ export function registerHandlers(app: App, cfg: Config): void {
     } catch (err) {
       logErr('comment_submit.dm', err)
     }
-    invalidate()
     await publishForUser(client, cfg, body.user.id)
-    // If the comment modal was pushed on top of a task modal, refresh that root.
-    if (origin === 'modal' && body.view?.root_view_id) {
-      try {
-        const modal = await taskModalFor(cfg, taskNum)
-        if (modal) await client.views.update({ view_id: body.view.root_view_id, view: modal })
-      } catch (err) {
-        logErr('comment_submit.refreshModal', err)
-      }
-    }
   })
 
   app.view('create_task_submit', async ({ ack, view, body, client }: any) => {
@@ -321,19 +343,30 @@ export function registerHandlers(app: App, cfg: Config): void {
       await ack({ response_action: 'errors', errors: { title: 'Task title cannot be empty.' } })
       return
     }
+    // Ack FIRST with a working view so the read+append+re-read round-trips never
+    // race the 3s view_submission deadline (a late ack makes Slack show Derek an
+    // error and he retries -> a duplicate task row). Then update the SAME view id
+    // with the outcome.
+    await ack({ response_action: 'update', view: workingModal('➕ Creating task…') })
+    const viewId: string | undefined = body.view?.id
     let res
     try {
       res = await createTask(cfg, { business, priority, title, notes: notes || undefined }, undefined)
     } catch (err) {
       logErr('create_task_submit', err)
-      await ack({ response_action: 'update', view: buildActErrorModal("Couldn't create the task — tracker unreachable. Try again or ping Claudio.") })
+      if (viewId) {
+        await client.views
+          .update({ view_id: viewId, view: buildActErrorModal("Couldn't create the task — tracker unreachable. Try again or ping Claudio.") })
+          .catch((e: any) => logErr('create_task_submit.errUpdate', e))
+      }
       return
     }
     const warn = res.warning ? `\n⚠️ ${res.warning}` : ''
-    await ack({
-      response_action: 'update',
-      view: successModal(`✅ *Task #${res.taskNum} created* — Not Started · ${business}${warn}`),
-    })
+    if (viewId) {
+      await client.views
+        .update({ view_id: viewId, view: successModal(`✅ *Task #${res.taskNum} created* — Not Started · ${business}${warn}`) })
+        .catch((e: any) => logErr('create_task_submit.okUpdate', e))
+    }
     const author = authorFor(body)
     await dmClaudio(client, cfg, createDmText({ sheetId: cfg.sheetId, taskNum: res.taskNum, title, business, priority, author, warning: res.warning }))
     invalidate()
@@ -341,7 +374,34 @@ export function registerHandlers(app: App, cfg: Config): void {
   })
 }
 
-/** Open (or push) the comment modal for a task, resolving its title/company. */
+/**
+ * Open a task-detail modal without letting Sheets I/O race the trigger_id: open
+ * a loading modal from the fresh trigger_id FIRST (no awaited I/O), then hydrate
+ * the SAME view id with the resolved task detail.
+ */
+async function openTaskModal(client: any, cfg: Config, triggerId: string, taskNum: string): Promise<void> {
+  let opened
+  try {
+    opened = await client.views.open({ trigger_id: triggerId, view: loadingModal('⏳ Loading task…') })
+  } catch (err) {
+    logErr('openTaskModal.open', err)
+    return
+  }
+  try {
+    const modal = await taskModalFor(cfg, taskNum)
+    const viewId = opened?.view?.id
+    if (viewId) await client.views.update({ view_id: viewId, view: modal ?? buildActErrorModal(`Task ${taskNum} not found.`) })
+  } catch (err) {
+    logErr('openTaskModal.hydrate', err)
+  }
+}
+
+/**
+ * Open (or push) the comment modal for a task. Open/push a loading modal FIRST
+ * from the fresh trigger_id (no awaited I/O in between — a cold-cache getTasks
+ * could otherwise blow the ~3s trigger_id window and the modal silently never
+ * opens), then hydrate with the real comment form.
+ */
 async function openCommentModal(
   client: any,
   cfg: Config,
@@ -350,16 +410,59 @@ async function openCommentModal(
   origin: 'home' | 'modal',
   push: boolean,
 ): Promise<void> {
-  const tasks = await getTasks(cfg)
-  const task = tasks.find((t) => t.taskNum === taskNum)
-  const view = buildCommentModal({
-    taskNum,
-    title: task?.title ?? `Task ${taskNum}`,
-    company: task?.company ?? '—',
-    origin,
-  })
-  if (push) await client.views.push({ trigger_id: triggerId, view })
-  else await client.views.open({ trigger_id: triggerId, view })
+  const loading = loadingModal('💬 Loading…')
+  let opened
+  try {
+    opened = push
+      ? await client.views.push({ trigger_id: triggerId, view: loading })
+      : await client.views.open({ trigger_id: triggerId, view: loading })
+  } catch (err) {
+    logErr('openCommentModal.open', err)
+    return
+  }
+  try {
+    const tasks = await getTasks(cfg)
+    const task = tasks.find((t) => t.taskNum === taskNum)
+    const view = buildCommentModal({
+      taskNum,
+      title: task?.title ?? `Task ${taskNum}`,
+      company: task?.company ?? '—',
+      origin,
+    })
+    const viewId = opened?.view?.id
+    if (viewId) await client.views.update({ view_id: viewId, view })
+  } catch (err) {
+    logErr('openCommentModal.hydrate', err)
+  }
+}
+
+/** A minimal placeholder modal shown instantly while data is fetched. */
+function loadingModal(text: string): ModalView {
+  return {
+    type: 'modal',
+    title: { type: 'plain_text', text: 'Agent M42' },
+    close: { type: 'plain_text', text: 'Close' },
+    blocks: [section(text)],
+  }
+}
+
+/** Shown after a submit is acked while the Sheet write completes. */
+function workingModal(text: string): ModalView {
+  return {
+    type: 'modal',
+    title: { type: 'plain_text', text: 'Working…' },
+    close: { type: 'plain_text', text: 'Close' },
+    blocks: [section(`${text}\n_Keep this open a moment…_`)],
+  }
+}
+
+function commentPostedModal(taskNum: string): ModalView {
+  return {
+    type: 'modal',
+    title: { type: 'plain_text', text: 'Comment posted' },
+    close: { type: 'plain_text', text: 'Close' },
+    blocks: [section(`✅ *Comment added to #${taskNum}.*\nClaudio has been notified.`)],
+  }
 }
 
 function successModal(text: string): ModalView {
