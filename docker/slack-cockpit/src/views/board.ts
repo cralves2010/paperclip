@@ -31,7 +31,7 @@ import {
   sortTasks,
   type Page,
 } from '../filters.js'
-import { clamp } from '../text.js'
+import { clamp, taskRef } from '../text.js'
 
 export interface BoardOpts {
   demo?: boolean
@@ -65,7 +65,7 @@ export function taskCardRow(t: Task, opts: BoardOpts = {}): Block {
   const count = opts.commentCounts?.get(t.taskNum) ?? 0
   const url = deliverableUrl(t)
   const parts = [
-    `\`${t.company}-${t.taskNum}\``,
+    `\`${taskRef(t)}\``,
     `${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}`,
   ]
   if (count > 0) parts.push(`💬 ${count}`)

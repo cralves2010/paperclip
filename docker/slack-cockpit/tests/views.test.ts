@@ -38,6 +38,13 @@ test('home view pins the actor groups above Portfolio Health (shared for both vi
   expect(json.indexOf('Needs Claudio')).toBeLessThan(json.indexOf('Portfolio Health'))
 })
 
+test('home hero row shows the full Task ref (COMPANY-N), not just the company', () => {
+  // Regression for the gap: the Needs-You hero meta line must carry the number.
+  const tasks = [t({ taskNum: '43', company: 'JRS', status: 'needs_you', ownerNext: 'Derek' })]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json).toContain('JRS-43')
+})
+
 test('home view groups act-needed tasks by Owner-next actor, capped at 5 per group', () => {
   const tasks: Task[] = []
   for (let i = 0; i < 7; i++) tasks.push(t({ taskNum: `d${i}`, status: 'needs_you', ownerNext: 'Derek' }))

@@ -3,7 +3,7 @@
 import { plainInput, section, selectInput, type ModalView } from '../blocks.js'
 import { distinctBusinesses, distinctPriorities } from '../filters.js'
 import type { Task } from '../model.js'
-import { clamp, truncateTitle } from '../text.js'
+import { clamp, taskRef, truncateTitle } from '../text.js'
 
 /** Where a comment modal was opened from (drives the post-submit refresh). */
 export type CommentOrigin = 'home' | 'modal'
@@ -69,7 +69,7 @@ export function buildCommentModal(args: {
     close: { type: 'plain_text', text: 'Cancel' },
     private_metadata: buildCommentMetadata({ taskNum: args.taskNum, origin: args.origin }),
     blocks: [
-      section(`*${clamp(args.title, 200)}*\n\`${args.company}-${args.taskNum}\``),
+      section(`*${clamp(args.title, 200)}*\n\`${taskRef(args)}\``),
       plainInput('comment', 'Comment', 'comment_text', {
         multiline: true,
         maxLength: 1000,

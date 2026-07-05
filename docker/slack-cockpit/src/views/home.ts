@@ -16,7 +16,7 @@ import {
   type ViewState,
 } from '../model.js'
 import { companyHealth, normalizeActor, rollupCounts, type Actor } from '../normalize.js'
-import { clamp, countLine } from '../text.js'
+import { clamp, countLine, taskRef } from '../text.js'
 
 // App Home hard-caps at ~100 blocks. Budget (worst case):
 //   chrome 4 + 3 actor groups × (header + 5 rows + context) = 21
@@ -50,7 +50,7 @@ function needsYouRow(t: Task, counts?: Map<string, number>): Block {
   const n = counts?.get(t.taskNum) ?? 0
   const badge = n > 0 ? ` · 💬 ${n}` : ''
   return section(
-    `*${clamp(t.title, 200)}*\n\`${t.company}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}${badge}`,
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}${badge}`,
     button('Open', `open_task:${t.taskNum}`, { primary: true }),
   )
 }

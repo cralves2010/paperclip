@@ -1,5 +1,13 @@
 // Text helpers that encode Slack Block Kit fidelity rules.
 
+/**
+ * The human-readable task reference shown on every surface, e.g. "JRS-43".
+ * Single source of truth so the company + number always render together.
+ */
+export function taskRef(t: { company: string; taskNum: string }): string {
+  return `${t.company}-${t.taskNum}`
+}
+
 /** Clamp to `max` chars with a trailing ellipsis (never exceeds `max`). */
 export function clamp(s: string, max: number): string {
   if (s.length <= max) return s

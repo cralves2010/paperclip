@@ -364,7 +364,7 @@ export function registerHandlers(app: App, cfg: Config): void {
     const warn = res.warning ? `\n⚠️ ${res.warning}` : ''
     if (viewId) {
       await client.views
-        .update({ view_id: viewId, view: successModal(`✅ *Task #${res.taskNum} created* — Not Started · ${business}${warn}`) })
+        .update({ view_id: viewId, view: successModal(`✅ *Task ${business}-${res.taskNum} created* — Not Started${warn}`) })
         .catch((e: any) => logErr('create_task_submit.okUpdate', e))
     }
     const author = authorFor(body)
