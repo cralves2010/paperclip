@@ -8,6 +8,7 @@
 //   node tracker.mjs init                                  add machine headers O/P/Q (idempotent)
 //   node tracker.mjs claims                                list active claims (+stale flags)
 //   node tracker.mjs row <task#>                           show one row
+//   node tracker.mjs comments <task#>                      read-only: list Comments-tab entries for a task
 //   node tracker.mjs claim <task#> --window cc-<slug> [--force]
 //   node tracker.mjs heartbeat <task#> --window cc-<slug>
 //   node tracker.mjs release <task#> --window cc-<slug> --status "<status>"
@@ -175,7 +176,7 @@ function claimAge(tsStr) {
 const { cmd, pos, flags } = parseArgs(process.argv.slice(2))
 
 if (!cmd || flags.help) {
-  console.log('usage: tracker.mjs init|claims|row|claim|heartbeat|release|done|link  (see file header)')
+  console.log('usage: tracker.mjs init|claims|row|comments|claim|heartbeat|release|done|link  (see file header)')
   process.exit(0)
 }
 
@@ -229,6 +230,46 @@ if (cmd === 'row') {
     const v = ((data.rows[r][i] ?? '') + '').trim()
     if (h && v) console.log(`${h}: ${v}`)
   })
+  process.exit(0)
+}
+
+if (cmd === 'comments') {
+  // Read-only: list the Comments-tab entries for one task. The tab is
+  // lazy-created by the cockpit's act layer on its first write, so absence is
+  // a NORMAL state (exit 0), mirroring the sidecar's tolerant fetchComments.
+  let cRows
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `'Comments'!A1:E`,
+    })
+    cRows = res.data.values ?? []
+  } catch {
+    console.log('No comments tab yet.')
+    audit({ cmd: 'comments-read', taskNum, tab: 'absent', count: 0 })
+    process.exit(0)
+  }
+  // Header A–E: Timestamp | Task # | Author | Comment | Seen — same tolerant
+  // header mapping as load(). The tab is append-only, so sheet order is
+  // chronological: printing in order already yields newest last.
+  const cHeaders = (cRows[0] ?? []).map((h) => (h ?? '').trim())
+  const cNorm = (s) => s.replace(/\s+/g, '').toLowerCase()
+  const cIdx = (...names) => {
+    for (const n of names) {
+      const i = cHeaders.findIndex((h) => cNorm(h) === cNorm(n))
+      if (i >= 0) return i
+    }
+    return -1
+  }
+  const iTs = cIdx('Timestamp', 'Time')
+  const iTask = cIdx('Task #', 'Task#', 'Task')
+  const iAuthor = cIdx('Author')
+  const iText = cIdx('Comment', 'Text')
+  const cCell = (row, i) => (i >= 0 ? ((row?.[i] ?? '') + '').trim() : '')
+  const hits = cRows.slice(1).filter((row) => cCell(row, iTask) === String(taskNum).trim())
+  if (hits.length === 0) console.log(`No comments for #${taskNum}.`)
+  for (const row of hits) console.log(`[${cCell(row, iTs)}] ${cCell(row, iAuthor)}: ${cCell(row, iText)}`)
+  audit({ cmd: 'comments-read', taskNum, count: hits.length })
   process.exit(0)
 }
 
