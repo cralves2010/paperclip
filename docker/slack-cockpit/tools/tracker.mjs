@@ -244,7 +244,14 @@ if (cmd === 'comments') {
       range: `'Comments'!A1:E`,
     })
     cRows = res.data.values ?? []
-  } catch {
+  } catch (err) {
+    // A missing tab is the ONLY error treated as "no comments": Google answers
+    // HTTP 400 "Unable to parse range: 'Comments'!..." when the range names a
+    // tab that doesn't exist. Anything else (429 quota, 5xx, revoked access)
+    // must fail loudly so a parallel window never mistakes an outage for an
+    // empty tab.
+    const msg = String(err?.message ?? err)
+    if (!/unable to parse range/i.test(msg)) die(`comments read failed: ${msg}`)
     console.log('No comments tab yet.')
     audit({ cmd: 'comments-read', taskNum, tab: 'absent', count: 0 })
     process.exit(0)
