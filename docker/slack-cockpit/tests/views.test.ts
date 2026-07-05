@@ -43,10 +43,16 @@ test('home view groups act-needed tasks by Owner-next actor, capped at 5 per gro
   for (let i = 0; i < 7; i++) tasks.push(t({ taskNum: `d${i}`, status: 'needs_you', ownerNext: 'Derek' }))
   tasks.push(t({ taskNum: 'c1', status: 'needs_you', ownerNext: 'Claudio' }))
   tasks.push(t({ taskNum: 'x1', status: 'needs_you', ownerNext: '' })) // empty -> team
-  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  const json = JSON.stringify(
+    buildHomeView(tasks, { kind: 'portfolio' }, { commentCounts: new Map([['d0', 4]]) }),
+  )
   expect(json).toContain('Needs the team')
   expect(json).toContain('Showing 5 of 7') // Derek group capped
   expect(json).toContain('Showing 1 of 1')
+  // Hero affordances survive the actor-group refactor: primary Open button + 💬 badge.
+  expect(json).toContain('open_task:d0')
+  expect(json).toContain('"style":"primary"')
+  expect(json).toContain('💬 4')
 })
 
 test('home view stays under the ~100-block App Home ceiling with many companies', () => {
