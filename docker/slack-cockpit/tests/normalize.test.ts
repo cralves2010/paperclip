@@ -39,11 +39,24 @@ describe('normalizeActor (Owner-next -> Needs Derek / Needs Claudio / team)', ()
     ['Me', 'claudio'],
     ['Agent M42', 'claudio'],
     ['agente', 'claudio'],
-    // Ambiguous (both sides named): Derek CORE name (Derek/Jason/Eric) wins…
-    ['Claudio (Derek optional sign-off)', 'derek'],
-    ['Agent M42 (Jason optional sign-off)', 'derek'],
-    // …otherwise it stays on Claudio (Shantal/Sydney are not the tiebreaker)
+    // OWNER = lead segment before the first '(' or ';'. A parenthetical/backup
+    // qualifier does NOT flip the group: the owner's move is what counts.
+    ['Claudio (Derek optional sign-off)', 'claudio'],
+    ['Agent M42 (Jason optional sign-off)', 'claudio'],
     ['Claudio (Shantal optional sign-off)', 'claudio'],
+    // Real live values the old rule misgrouped (probed 2026-07-05):
+    ['Claudio (Derek backup)', 'claudio'],
+    ['Derek (backup Claudio)', 'derek'],
+    ['Shantal (Agent M42 drafts)', 'derek'],
+    ['Sydney (owner); Shantal/Me backup', 'derek'],
+    ['Agent M42 / Claudio (Derek to confirm)', 'claudio'],
+    ['Derek (owner); Agent M42 (listings prepped)', 'derek'],
+    ['Jason (Agent M42 backup)', 'derek'],
+    // Owner segment genuinely names BOTH sides -> Derek CORE wins (boss visibility)
+    ['Claudio / Derek', 'derek'],
+    ['Agent M42 / Derek (split)', 'derek'],
+    // Unknown person in the owner slot -> team
+    ['Patricia (Agent M42 drafts)', 'team'],
     // Empty / unrecognized -> team (never guess a person from noise)
     ['', 'team'],
     ['   ', 'team'],

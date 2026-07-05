@@ -46,16 +46,28 @@ const CLAUDIO_SIDE = /\bclaudio\b|\bme\b|agent\s*m42|\bagente\b/
 
 /**
  * Map a free-text "Owner-next" cell to the actor whose move it is.
- * Empty or unrecognized -> 'team' (never guess a person from noise).
- * When BOTH sides appear (e.g. "Claudio (Derek optional sign-off)"), a Derek
- * CORE name (Derek/Jason/Eric) wins; otherwise it stays on Claudio.
+ *
+ * The OWNER is the lead segment BEFORE the first qualifier: parentheticals like
+ * "(Derek backup)" / "(Agent M42 drafts)" and post-";" clauses describe backups,
+ * drafters, or optional sign-offs — NOT who must act next. So we classify only
+ * that lead segment (real live values):
+ *   "Claudio (Derek backup)"          -> owner "Claudio"            -> claudio
+ *   "Shantal (Agent M42 drafts)"      -> owner "Shantal"            -> derek
+ *   "Sydney (owner); Me/Derek backup" -> owner "Sydney"            -> derek
+ *   "Agent M42 / Claudio (Derek …)"   -> owner "Agent M42/Claudio" -> claudio
+ * Empty or unrecognized -> 'team' (never guess a person from noise). When the
+ * owner segment genuinely names BOTH sides (e.g. "Claudio / Derek",
+ * "Agent M42 / Derek"), a Derek CORE name (Derek/Jason/Eric) wins so shared
+ * work still surfaces to Derek.
  */
 export function normalizeActor(rawOwnerNext: string | undefined): Actor {
-  const s = (rawOwnerNext ?? '').toLowerCase().trim().replace(/\s+/g, ' ')
-  if (!s) return 'team'
-  const derek = DEREK_SIDE.test(s)
-  const claudio = CLAUDIO_SIDE.test(s)
-  if (derek && claudio) return DEREK_CORE.test(s) ? 'derek' : 'claudio'
+  const full = (rawOwnerNext ?? '').toLowerCase().trim().replace(/\s+/g, ' ')
+  if (!full) return 'team'
+  // Lead segment before the first '(' or ';' = the owner; qualifiers follow it.
+  const owner = full.split(/[(;]/)[0].trim() || full
+  const derek = DEREK_SIDE.test(owner)
+  const claudio = CLAUDIO_SIDE.test(owner)
+  if (derek && claudio) return DEREK_CORE.test(owner) ? 'derek' : 'claudio'
   if (derek) return 'derek'
   if (claudio) return 'claudio'
   return 'team'
