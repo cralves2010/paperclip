@@ -1,7 +1,7 @@
 import type { Config } from './config.js'
-import type { Task, ViewState } from './model.js'
-import { fetchTasks } from './sheets.js'
-import { DEMO_TASKS } from './fixture.js'
+import type { Comment, Task, ViewState } from './model.js'
+import { fetchComments, fetchTasks } from './sheets.js'
+import { DEMO_COMMENTS, DEMO_TASKS } from './fixture.js'
 
 // Per-user view-state so a background refresh re-publishes the SAME view the
 // user is currently on (App Home holds no client-side nav state).
@@ -36,6 +36,24 @@ export async function getTasks(cfg: Config, now: number = Date.now()): Promise<T
   }
 }
 
+// Separate comments cache (same TTL). Kept SEPARATE from the task cache so a
+// Comments-tab read error can never blank the task board (error isolation).
+let commentsCache: { comments: Comment[]; at: number } | null = null
+
+export async function getComments(cfg: Config, now: number = Date.now()): Promise<Comment[]> {
+  if (cfg.demo) return DEMO_COMMENTS
+  if (commentsCache && now - commentsCache.at < TTL_MS) return commentsCache.comments
+  try {
+    const comments = await fetchComments(cfg)
+    commentsCache = { comments, at: now }
+    return comments
+  } catch {
+    // Never throw from comments: an empty layer degrades gracefully (no badges).
+    return commentsCache?.comments ?? []
+  }
+}
+
 export function invalidate(): void {
   cache = null
+  commentsCache = null
 }

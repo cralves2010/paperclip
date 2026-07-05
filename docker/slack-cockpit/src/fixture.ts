@@ -1,4 +1,4 @@
-import type { Task } from './model.js'
+import type { Comment, Task } from './model.js'
 
 // Demo fixture: the REAL JRS + Brightly working state gathered during design
 // (statuses live in the vault; the tracker's Status column is a stale seed).
@@ -33,3 +33,12 @@ const BRIGHTLY: Task[] = [
 ]
 
 export const DEMO_TASKS: Task[] = [...JRS, ...BRIGHTLY]
+
+// Sample comments so the 💬 count badges + the modal comment list render in
+// demo mode (COCKPIT_DEMO=true) without any Google setup. Keyed to existing
+// task numbers (#41 JRS, #13 Brightly).
+export const DEMO_COMMENTS: Comment[] = [
+  { timestamp: '2026-07-03T14:20:00.000Z', taskNum: '41', author: 'derek (U08APFXGJ4U)', text: 'Great — go ahead and start outreach once Jason confirms as sender.', seen: '' },
+  { timestamp: '2026-07-03T15:05:00.000Z', taskNum: '41', author: 'claudio (U08C8QTNBJ9)', text: 'On it — will confirm Jason today.', seen: 'cc-w2' },
+  { timestamp: '2026-07-03T16:40:00.000Z', taskNum: '13', author: 'derek (U08APFXGJ4U)', text: 'Let’s lock the canonical price this week so the launch chain can move.', seen: '' },
+]
