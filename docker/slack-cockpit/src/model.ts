@@ -71,7 +71,6 @@ export interface CompanyRollup {
   counts: { inProgress: number; awaiting: number; blocked: number }
 }
 
-export type SortKey = 'recent' | 'status' | 'title'
 export type StatusFilter = CanonicalStatus | 'all' | 'open'
 export type BoardSort = 'updated' | 'priority' | 'task_num'
 
@@ -82,5 +81,6 @@ export interface BoardFilters {
 }
 
 export type ViewState =
-  | { kind: 'portfolio'; sort?: SortKey }
-  | { kind: 'company'; companyId: string; filterStatus?: StatusFilter; sort?: SortKey }
+  | { kind: 'portfolio' }
+  | { kind: 'board'; filters: BoardFilters; sort: BoardSort; page: number }
+  | { kind: 'search'; query: string; page: number }

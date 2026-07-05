@@ -1,16 +1,42 @@
 import type { App } from '@slack/bolt'
 import type { Config } from './config.js'
 import { buildPrivateView, isAllowed } from './allowlist.js'
-import { getState, getTasks, invalidate, setState } from './state.js'
+import { getComments, getState, getTasks, invalidate, setState } from './state.js'
+import { commentCountByTask } from './sheets.js'
+import { appendComment, createTask } from './sheets-write.js'
+import { dmClaudio, commentDmText, createDmText } from './notify.js'
+import { section, type ModalView } from './blocks.js'
 import { buildErrorView, buildHomeView } from './views/home.js'
-import { buildCompanyView } from './views/company.js'
+import { buildBoardView } from './views/board.js'
 import { buildTaskModal } from './views/taskModal.js'
 import { buildSearchModal, buildSearchResults, searchTasks } from './views/search.js'
+import {
+  attributeAuthor,
+  buildActErrorModal,
+  buildCommentModal,
+  buildCreateModal,
+  buildDemoNoticeModal,
+  buildDeniedModal,
+  parseCommentMetadata,
+  validateComment,
+} from './views/actModals.js'
+import type { BoardSort, StatusFilter, Task, ViewState } from './model.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 function logErr(where: string, err: any): void {
   console.error(`[cockpit] ${where} failed:`, err?.code || err?.message, err?.data?.error || err?.errors?.[0]?.message || '')
+}
+
+type BoardState = Extract<ViewState, { kind: 'board' }>
+
+function boardState(userId: string): BoardState {
+  const s = getState(userId)
+  return s.kind === 'board' ? { ...s, filters: { ...s.filters } } : { kind: 'board', filters: {}, sort: 'updated', page: 0 }
+}
+
+function authorFor(body: any): string {
+  return attributeAuthor(body?.user?.id ?? '', body?.user?.username || body?.user?.name || undefined)
 }
 
 async function publishForUser(client: any, cfg: Config, userId: string): Promise<void> {
@@ -19,12 +45,17 @@ async function publishForUser(client: any, cfg: Config, userId: string): Promise
     return
   }
   try {
-    const tasks = await getTasks(cfg)
+    const [tasks, comments] = await Promise.all([getTasks(cfg), getComments(cfg)])
+    const commentCounts = commentCountByTask(comments)
     const state = getState(userId)
-    const view =
-      state.kind === 'company'
-        ? buildCompanyView(tasks, state.companyId, state)
-        : buildHomeView(tasks, state, { demo: cfg.demo })
+    let view
+    if (state.kind === 'board') {
+      view = buildBoardView(tasks, state, { demo: cfg.demo, commentCounts, allTasks: tasks })
+    } else if (state.kind === 'search') {
+      view = buildSearchResults(searchTasks(tasks, state.query), state.query, state.page, { commentCounts })
+    } else {
+      view = buildHomeView(tasks, state, { demo: cfg.demo, commentCounts })
+    }
     await client.views.publish({ user_id: userId, view })
   } catch (err) {
     // Never leave the Home a silent blank: publish a visible error state.
@@ -33,7 +64,18 @@ async function publishForUser(client: any, cfg: Config, userId: string): Promise
   }
 }
 
+/** Build a task modal for `taskNum` with its comments; returns null if not found. */
+async function taskModalFor(cfg: Config, taskNum: string): Promise<ModalView | null> {
+  const [tasks, comments] = await Promise.all([getTasks(cfg), getComments(cfg)])
+  const task = tasks.find((t) => t.taskNum === taskNum)
+  return task ? buildTaskModal(task, comments) : null
+}
+
 export function registerHandlers(app: App, cfg: Config): void {
+  const guard = (userId: string): boolean => isAllowed(userId, cfg.allowlist)
+
+  // ── Navigation ────────────────────────────────────────────────────────────
+
   app.event('app_home_opened', async ({ event, client }: any) => {
     await publishForUser(client, cfg, event.user)
   })
@@ -44,10 +86,16 @@ export function registerHandlers(app: App, cfg: Config): void {
     await publishForUser(client, cfg, body.user.id)
   })
 
+  app.action('open_board', async ({ ack, body, client }: any) => {
+    await ack()
+    setState(body.user.id, { kind: 'board', filters: {}, sort: 'updated', page: 0 })
+    await publishForUser(client, cfg, body.user.id)
+  })
+
   app.action(/^open_company:/, async ({ ack, action, body, client }: any) => {
     await ack()
-    const companyId = String(action.action_id).split(':').slice(1).join(':')
-    setState(body.user.id, { kind: 'company', companyId })
+    const biz = String(action.action_id).split(':').slice(1).join(':')
+    setState(body.user.id, { kind: 'board', filters: { business: biz }, sort: 'updated', page: 0 })
     await publishForUser(client, cfg, body.user.id)
   })
 
@@ -57,52 +105,268 @@ export function registerHandlers(app: App, cfg: Config): void {
     await publishForUser(client, cfg, body.user.id)
   })
 
+  // ── Board filters / sort / paging ─────────────────────────────────────────
+
+  app.action('filter_business', async ({ ack, action, body, client }: any) => {
+    await ack()
+    const v = action.selected_option?.value
+    const b = boardState(body.user.id)
+    b.filters.business = v && v !== '__all__' ? v : undefined
+    b.page = 0
+    setState(body.user.id, b)
+    await publishForUser(client, cfg, body.user.id)
+  })
+
+  app.action('filter_status', async ({ ack, action, body, client }: any) => {
+    await ack()
+    const v = action.selected_option?.value as StatusFilter | undefined
+    const b = boardState(body.user.id)
+    b.filters.status = v && v !== 'all' ? v : undefined
+    b.page = 0
+    setState(body.user.id, b)
+    await publishForUser(client, cfg, body.user.id)
+  })
+
+  app.action('filter_priority', async ({ ack, action, body, client }: any) => {
+    await ack()
+    const v = action.selected_option?.value
+    const b = boardState(body.user.id)
+    b.filters.priority = v && v !== '__all__' ? v : undefined
+    b.page = 0
+    setState(body.user.id, b)
+    await publishForUser(client, cfg, body.user.id)
+  })
+
+  app.action('sort_by', async ({ ack, action, body, client }: any) => {
+    await ack()
+    const v = action.selected_option?.value as BoardSort
+    const b = boardState(body.user.id)
+    b.sort = v ?? 'updated'
+    b.page = 0
+    setState(body.user.id, b)
+    await publishForUser(client, cfg, body.user.id)
+  })
+
+  app.action('clear_filters', async ({ ack, body, client }: any) => {
+    await ack()
+    const b = boardState(body.user.id)
+    b.filters = {}
+    b.page = 0
+    setState(body.user.id, b)
+    await publishForUser(client, cfg, body.user.id)
+  })
+
+  const pageBy = (delta: number) => async ({ ack, body, client }: any) => {
+    await ack()
+    const s = getState(body.user.id)
+    if (s.kind === 'board') setState(body.user.id, { ...s, page: Math.max(0, s.page + delta) })
+    else if (s.kind === 'search') setState(body.user.id, { ...s, page: Math.max(0, s.page + delta) })
+    await publishForUser(client, cfg, body.user.id)
+  }
+  app.action('page_prev', pageBy(-1))
+  app.action('page_next', pageBy(1))
+
+  // ── Task detail (hero row Open button) ────────────────────────────────────
+
   app.action(/^open_task:/, async ({ ack, action, body, client }: any) => {
     await ack()
     try {
       const taskNum = String(action.action_id).split(':')[1]
-      const tasks = await getTasks(cfg)
-      const task = tasks.find((t) => t.taskNum === taskNum)
-      if (task) await client.views.open({ trigger_id: body.trigger_id, view: buildTaskModal(task) })
+      const modal = await taskModalFor(cfg, taskNum)
+      if (modal) await client.views.open({ trigger_id: body.trigger_id, view: modal })
     } catch (err) {
       logErr('open_task', err)
     }
   })
 
+  // ── Board card overflow menu ──────────────────────────────────────────────
+
+  app.action(/^card_menu:/, async ({ ack, action, body, client }: any) => {
+    // ALWAYS ack (a deliverable option opens its url client-side).
+    await ack()
+    try {
+      if (!guard(body.user.id)) return
+      const value: string = action.selected_option?.value ?? ''
+      const [kind, taskNum] = value.split(':')
+      if (kind === 'open') {
+        const modal = await taskModalFor(cfg, taskNum)
+        if (modal) await client.views.open({ trigger_id: body.trigger_id, view: modal })
+      } else if (kind === 'comment') {
+        await openCommentModal(client, cfg, body.trigger_id, taskNum, 'home', false)
+      }
+      // 'deliverable' -> no-op; the overflow url opened it client-side.
+    } catch (err) {
+      logErr('card_menu', err)
+    }
+  })
+
+  // ── Add-comment button inside the task modal ──────────────────────────────
+
+  app.action(/^comment:/, async ({ ack, action, body, client }: any) => {
+    await ack()
+    try {
+      if (!guard(body.user.id)) return
+      const taskNum = String(action.action_id).split(':')[1]
+      await openCommentModal(client, cfg, body.trigger_id, taskNum, 'modal', true)
+    } catch (err) {
+      logErr('comment_button', err)
+    }
+  })
+
+  // ── Search ────────────────────────────────────────────────────────────────
+
   app.action('open_search', async ({ ack, body, client }: any) => {
     await ack()
     try {
+      if (!guard(body.user.id)) return
       await client.views.open({ trigger_id: body.trigger_id, view: buildSearchModal() })
     } catch (err) {
       logErr('open_search', err)
     }
   })
 
-  // URL buttons open client-side; still must be acked.
+  app.view('search_submit', async ({ ack, view, body, client }: any) => {
+    const query = (view.state.values?.q?.search_query?.value ?? '').trim()
+    if (!query) {
+      await ack({ response_action: 'errors', errors: { q: 'Type something to search.' } })
+      return
+    }
+    await ack()
+    setState(body.user.id, { kind: 'search', query, page: 0 })
+    await publishForUser(client, cfg, body.user.id)
+  })
+
+  // ── Create task ───────────────────────────────────────────────────────────
+
+  app.action('open_create_task', async ({ ack, body, client }: any) => {
+    await ack()
+    try {
+      if (!guard(body.user.id)) return
+      const tasks = await getTasks(cfg)
+      await client.views.open({ trigger_id: body.trigger_id, view: buildCreateModal(tasks) })
+    } catch (err) {
+      logErr('open_create_task', err)
+    }
+  })
+
+  // ── URL buttons (open client-side; still acked) ───────────────────────────
+
   app.action(/^url_/, async ({ ack }: any) => {
     await ack()
   })
 
-  // v0: filters/sort are acked; the primary drill path is the company view.
-  app.action('filter_company', async ({ ack }: any) => {
-    await ack()
-  })
-  app.action('filter_status', async ({ ack }: any) => {
-    await ack()
-  })
-  app.action('sort', async ({ ack }: any) => {
-    await ack()
-  })
+  // ── View submissions ──────────────────────────────────────────────────────
 
-  app.view('search_submit', async ({ ack, view, body, client }: any) => {
-    await ack()
+  app.view('comment_submit', async ({ ack, view, body, client }: any) => {
+    if (!guard(body.user.id)) {
+      await ack({ response_action: 'update', view: buildDeniedModal() })
+      return
+    }
+    const { taskNum, origin } = parseCommentMetadata(view.private_metadata)
+    const text = view.state.values?.comment?.comment_text?.value ?? ''
+    const invalid = validateComment(text)
+    if (invalid) {
+      await ack({ response_action: 'errors', errors: { comment: invalid } })
+      return
+    }
+    if (cfg.demo) {
+      await ack({ response_action: 'update', view: buildDemoNoticeModal('comment') })
+      return
+    }
+    const author = authorFor(body)
     try {
-      const query = view.state.values?.q?.search_query?.value ?? ''
-      const tasks = await getTasks(cfg)
-      const results = searchTasks(tasks, query)
-      await client.views.publish({ user_id: body.user.id, view: buildSearchResults(results, query) })
+      await appendComment(cfg, { taskNum, author, text: text.trim() }, undefined)
     } catch (err) {
-      logErr('search_submit', err)
+      logErr('comment_submit.append', err)
+      await ack({ response_action: 'errors', errors: { comment: "Couldn't save — tracker unreachable. Try again or ping Claudio." } })
+      return
+    }
+    await ack()
+    // Best-effort DM to Claudio (never rolls back the write).
+    try {
+      const tasks = await getTasks(cfg)
+      const task = tasks.find((t) => t.taskNum === taskNum)
+      await dmClaudio(client, cfg, commentDmText({ sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', author, text: text.trim() }))
+    } catch (err) {
+      logErr('comment_submit.dm', err)
+    }
+    invalidate()
+    await publishForUser(client, cfg, body.user.id)
+    // If the comment modal was pushed on top of a task modal, refresh that root.
+    if (origin === 'modal' && body.view?.root_view_id) {
+      try {
+        const modal = await taskModalFor(cfg, taskNum)
+        if (modal) await client.views.update({ view_id: body.view.root_view_id, view: modal })
+      } catch (err) {
+        logErr('comment_submit.refreshModal', err)
+      }
     }
   })
+
+  app.view('create_task_submit', async ({ ack, view, body, client }: any) => {
+    if (!guard(body.user.id)) {
+      await ack({ response_action: 'update', view: buildDeniedModal() })
+      return
+    }
+    if (cfg.demo) {
+      await ack({ response_action: 'update', view: buildDemoNoticeModal('create') })
+      return
+    }
+    const v = view.state.values
+    const business = v?.business?.business_select?.selected_option?.value ?? ''
+    const title = (v?.title?.title_text?.value ?? '').trim()
+    const priority = v?.priority?.priority_select?.selected_option?.value ?? ''
+    const notes = (v?.notes?.notes_text?.value ?? '').trim()
+    if (!title) {
+      await ack({ response_action: 'errors', errors: { title: 'Task title cannot be empty.' } })
+      return
+    }
+    let res
+    try {
+      res = await createTask(cfg, { business, priority, title, notes: notes || undefined }, undefined)
+    } catch (err) {
+      logErr('create_task_submit', err)
+      await ack({ response_action: 'update', view: buildActErrorModal("Couldn't create the task — tracker unreachable. Try again or ping Claudio.") })
+      return
+    }
+    const warn = res.warning ? `\n⚠️ ${res.warning}` : ''
+    await ack({
+      response_action: 'update',
+      view: successModal(`✅ *Task #${res.taskNum} created* — Not Started · ${business}${warn}`),
+    })
+    const author = authorFor(body)
+    await dmClaudio(client, cfg, createDmText({ sheetId: cfg.sheetId, taskNum: res.taskNum, title, business, priority, author, warning: res.warning }))
+    invalidate()
+    await publishForUser(client, cfg, body.user.id)
+  })
+}
+
+/** Open (or push) the comment modal for a task, resolving its title/company. */
+async function openCommentModal(
+  client: any,
+  cfg: Config,
+  triggerId: string,
+  taskNum: string,
+  origin: 'home' | 'modal',
+  push: boolean,
+): Promise<void> {
+  const tasks = await getTasks(cfg)
+  const task = tasks.find((t) => t.taskNum === taskNum)
+  const view = buildCommentModal({
+    taskNum,
+    title: task?.title ?? `Task ${taskNum}`,
+    company: task?.company ?? '—',
+    origin,
+  })
+  if (push) await client.views.push({ trigger_id: triggerId, view })
+  else await client.views.open({ trigger_id: triggerId, view })
+}
+
+function successModal(text: string): ModalView {
+  return {
+    type: 'modal',
+    title: { type: 'plain_text', text: 'Task created' },
+    close: { type: 'plain_text', text: 'Close' },
+    blocks: [section(text)],
+  }
 }

@@ -5,7 +5,6 @@ import {
   divider,
   header,
   section,
-  staticSelect,
   type Block,
   type HomeView,
 } from '../blocks.js'
@@ -26,11 +25,14 @@ const NEEDS_ORDER: Record<string, number> = { needs_you: 0, changes_requested: 1
 export interface HomeOpts {
   demo?: boolean
   syncedAt?: string
+  commentCounts?: Map<string, number>
 }
 
-function needsYouRow(t: Task): Block {
+function needsYouRow(t: Task, counts?: Map<string, number>): Block {
+  const n = counts?.get(t.taskNum) ?? 0
+  const badge = n > 0 ? ` · 💬 ${n}` : ''
   return section(
-    `*${clamp(t.title, 200)}*\n\`${t.company}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}`,
+    `*${clamp(t.title, 200)}*\n\`${t.company}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}${badge}`,
     button('Open', `open_task:${t.taskNum}`, { primary: true }),
   )
 }
@@ -50,12 +52,9 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     context(`${provenance} · Legend: 🟢 On track · 🟡 At risk · 🔴 Blocked`),
     actions([
       button('🔄 Refresh', 'refresh_home'),
-      staticSelect('Sort: Recent', 'sort', [
-        { text: 'Most recent', value: 'recent' },
-        { text: 'Status', value: 'status' },
-        { text: 'Title', value: 'title' },
-      ]),
+      button('📋 All tasks', 'open_board'),
       button('🔍 Search', 'open_search'),
+      button('➕ New task', 'open_create_task'),
     ]),
     divider(),
     header('🔔 Needs You'),
@@ -65,7 +64,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     blocks.push(section('🎉 *Nothing needs you right now.*'))
     blocks.push(context("Everything's in progress or done — check Portfolio Health below."))
   } else {
-    for (const t of needsYou.slice(0, 5)) blocks.push(needsYouRow(t))
+    for (const t of needsYou.slice(0, 5)) blocks.push(needsYouRow(t, opts.commentCounts))
     blocks.push(context(`Showing ${Math.min(needsYou.length, 5)} of ${needsYou.length}`))
   }
 
@@ -81,7 +80,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
 
   blocks.push(
     divider(),
-    context('Read-only cockpit (v0) · Actions (approve · request changes · comment) coming in v1'),
+    context('Cockpit v1 · comment on any task · ➕ create tasks · filters & search — data: M42 Central Task Tracker'),
   )
   return { type: 'home', blocks }
 }
