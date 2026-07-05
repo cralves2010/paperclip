@@ -4,7 +4,8 @@ import { buildPrivateView, isAllowed } from './allowlist.js'
 import { getComments, getState, getTasks, invalidate, lastSyncAt, setState } from './state.js'
 import { commentCountByTask } from './sheets.js'
 import { appendComment, createTask } from './sheets-write.js'
-import { dmClaudio, commentDmText, createDmText } from './notify.js'
+import { dmClaudio, createDmText } from './notify.js'
+import { classifyAndCompose } from './classify.js'
 import { section, type ModalView } from './blocks.js'
 import { taskRef } from './text.js'
 import { buildErrorView, buildHomeView } from './views/home.js'
@@ -327,9 +328,14 @@ export function registerHandlers(app: App, cfg: Config): void {
     } catch (err) {
       logErr('comment_submit.refresh', err)
     }
-    // Best-effort DM to Claudio (never rolls back the write).
+    // Best-effort DM to Claudio (never rolls back the write). Enriched with a
+    // classification when COCKPIT_CLASSIFY is on; falls back to the raw DM
+    // otherwise or on any classifier failure (the notification never depends on
+    // the LLM succeeding). Runs post-ack, so it can't touch the 3s deadline.
     try {
-      await dmClaudio(client, cfg, commentDmText({ sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', author, text: text.trim() }))
+      const base = { sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', author, text: text.trim() }
+      const dm = await classifyAndCompose(cfg, { authorId: body?.user?.id ?? '', base, task, prior: [] })
+      await dmClaudio(client, cfg, dm)
     } catch (err) {
       logErr('comment_submit.dm', err)
     }

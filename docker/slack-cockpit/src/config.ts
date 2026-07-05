@@ -12,6 +12,10 @@ export interface Config {
   notifyUserId: string
   commentsTab: string
   trackerTab: string
+  // Comment intelligence (v0): advisory DM enrichment. OFF unless COCKPIT_CLASSIFY
+  // is truthy AND anthropicApiKey is set — otherwise the DM is today's raw text.
+  classifyEnabled: boolean
+  anthropicApiKey: string
 }
 
 function req(env: NodeJS.ProcessEnv, key: string): string {
@@ -50,6 +54,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // otherwise fall back to the explicit tab env / default 'Tracker'.
     // (The Comments range is NOT derived from sheetRange — it has no prefix.)
     trackerTab: resolveTrackerTab(sheetRange, opt(env, 'COCKPIT_TRACKER_TAB', 'Tracker')),
+    classifyEnabled: /^(1|true|yes)$/i.test((env.COCKPIT_CLASSIFY ?? '').trim()),
+    anthropicApiKey: opt(env, 'ANTHROPIC_API_KEY'),
   }
 }
 
