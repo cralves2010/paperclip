@@ -12,6 +12,7 @@ export interface ModalView {
   title: Block
   submit?: Block
   close?: Block
+  private_metadata?: string
   blocks: Block[]
 }
 
