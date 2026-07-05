@@ -57,3 +57,13 @@ export function invalidate(): void {
   cache = null
   commentsCache = null
 }
+
+/**
+ * Epoch ms of the last SUCCESSFUL task sync (null before the first read). Drives
+ * the cockpit freshness dot: while the sheet is reachable this stays within the
+ * TTL (fresh/green); under stale-while-error it stops advancing, so the dot ages
+ * to yellow/red — surfacing that the tracker sync is broken.
+ */
+export function lastSyncAt(): number | null {
+  return cache?.at ?? null
+}

@@ -24,6 +24,14 @@ test('truncateTitle caps at 24 chars', () => {
   expect(truncateTitle('School contacts — 62 Tucson principals').length).toBeLessThanOrEqual(24)
 })
 
+test('home provenance shows "Last synced <clock>" freshness, not the old "LIVE · synced just now"', () => {
+  const now = 1_700_000_000_000
+  const fresh = JSON.stringify(buildHomeView([t({})], { kind: 'portfolio' }, { syncedAtMs: now - 60_000, now }))
+  expect(fresh).toContain('Last synced')
+  expect(fresh).not.toContain('synced just now')
+  expect(fresh).not.toContain('*LIVE*')
+})
+
 test('home view pins the actor groups above Portfolio Health (shared for both viewers)', () => {
   const tasks = [
     t({ status: 'in_progress' }),

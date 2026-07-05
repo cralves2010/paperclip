@@ -26,3 +26,50 @@ export function truncateTitle(s: string): string {
 export function countLine(c: { inProgress: number; awaiting: number; blocked: number }): string {
   return `🔵 ${c.inProgress} In progress · 🟡 ${c.awaiting} Awaiting · 🔴 ${c.blocked} Blocked`
 }
+
+const MIN_MS = 60_000
+
+/**
+ * Freshness dot from the age of the data: 🟢 fresh (<30m), 🟡 getting stale
+ * (30–60m), 🔴 stale (≥60m). Ages to yellow/red exactly when the sidecar can't
+ * reach the tracker and is serving stale-while-error cache — a real "the sync
+ * is broken" signal, not decoration.
+ */
+export function freshnessDot(ageMs: number): string {
+  if (ageMs < 30 * MIN_MS) return '🟢'
+  if (ageMs < 60 * MIN_MS) return '🟡'
+  return '🔴'
+}
+
+/** Human relative age of the data: "just now", "3m ago", "1h 20m ago". */
+export function relativeAge(ageMs: number): string {
+  const mins = Math.floor(Math.max(0, ageMs) / MIN_MS)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const h = Math.floor(mins / 60)
+  const r = mins % 60
+  return r ? `${h}h ${r}m ago` : `${h}h ago`
+}
+
+/** Absolute clock in Derek's timezone, e.g. "Jul 5, 2:32 PM MST". */
+export function formatSyncClock(ms: number, tz = 'America/Phoenix'): string {
+  return new Date(ms).toLocaleString('en-US', {
+    timeZone: tz,
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  })
+}
+
+/**
+ * The cockpit's live freshness line, e.g.
+ *   "🟢 *Last synced Jul 5, 2:32 PM MST* · just now · from M42 Central Task Tracker".
+ * Computed at render time; `now` is injectable for tests.
+ */
+export function liveProvenance(syncedAtMs?: number, now: number = Date.now()): string {
+  const synced = syncedAtMs ?? now
+  const age = Math.max(0, now - synced)
+  return `${freshnessDot(age)} *Last synced ${formatSyncClock(synced)}* · ${relativeAge(age)} · from M42 Central Task Tracker`
+}

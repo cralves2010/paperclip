@@ -1,7 +1,7 @@
 import type { App } from '@slack/bolt'
 import type { Config } from './config.js'
 import { buildPrivateView, isAllowed } from './allowlist.js'
-import { getComments, getState, getTasks, invalidate, setState } from './state.js'
+import { getComments, getState, getTasks, invalidate, lastSyncAt, setState } from './state.js'
 import { commentCountByTask } from './sheets.js'
 import { appendComment, createTask } from './sheets-write.js'
 import { dmClaudio, commentDmText, createDmText } from './notify.js'
@@ -50,13 +50,14 @@ async function publishForUser(client: any, cfg: Config, userId: string): Promise
     const [tasks, comments] = await Promise.all([getTasks(cfg), getComments(cfg)])
     const commentCounts = commentCountByTask(comments)
     const state = getState(userId)
+    const syncedAtMs = lastSyncAt() ?? undefined
     let view
     if (state.kind === 'board') {
-      view = buildBoardView(tasks, state, { demo: cfg.demo, commentCounts, allTasks: tasks })
+      view = buildBoardView(tasks, state, { demo: cfg.demo, commentCounts, allTasks: tasks, syncedAtMs })
     } else if (state.kind === 'search') {
       view = buildSearchResults(searchTasks(tasks, state.query), state.query, state.page, { commentCounts })
     } else {
-      view = buildHomeView(tasks, state, { demo: cfg.demo, commentCounts })
+      view = buildHomeView(tasks, state, { demo: cfg.demo, commentCounts, syncedAtMs })
     }
     await client.views.publish({ user_id: userId, view })
   } catch (err) {

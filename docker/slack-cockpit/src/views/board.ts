@@ -32,13 +32,17 @@ import {
   sortTasks,
   type Page,
 } from '../filters.js'
-import { clamp, taskRef } from '../text.js'
+import { clamp, liveProvenance, taskRef } from '../text.js'
 
 export interface BoardOpts {
   demo?: boolean
   commentCounts?: Map<string, number>
   /** All tasks (unfiltered) so the filter selects can offer every option. */
   allTasks?: Task[]
+  /** Epoch ms of the last successful tracker sync — drives the freshness dot. */
+  syncedAtMs?: number
+  /** Injectable clock for tests; defaults to Date.now(). */
+  now?: number
 }
 
 const STATUS_ORDER: StatusFilter[] = [
@@ -105,7 +109,7 @@ export function buildBoardView(tasks: Task[], state: Extract<ViewState, { kind: 
 
   const provenance = opts.demo
     ? '🧪 DEMO FIXTURE · sample data (not live)'
-    : '🟢 LIVE · from M42 Central Task Tracker'
+    : liveProvenance(opts.syncedAtMs, opts.now)
 
   const bizOptions = [{ text: 'All businesses', value: '__all__' }, ...distinctBusinesses(source).map((b) => ({ text: b, value: b }))]
   const statusOptions = [

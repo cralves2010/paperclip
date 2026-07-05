@@ -16,7 +16,7 @@ import {
   type ViewState,
 } from '../model.js'
 import { companyHealth, normalizeActor, rollupCounts, type Actor } from '../normalize.js'
-import { clamp, countLine, taskRef } from '../text.js'
+import { clamp, countLine, liveProvenance, taskRef } from '../text.js'
 
 // App Home hard-caps at ~100 blocks. Budget (worst case):
 //   chrome 4 + 3 actor groups × (header + 5 rows + context) = 21
@@ -42,7 +42,10 @@ const NEEDS_GROUPS: { actor: Actor; title: string; empty: string }[] = [
 
 export interface HomeOpts {
   demo?: boolean
-  syncedAt?: string
+  /** Epoch ms of the last successful tracker sync — drives the freshness dot. */
+  syncedAtMs?: number
+  /** Injectable clock for tests; defaults to Date.now(). */
+  now?: number
   commentCounts?: Map<string, number>
 }
 
@@ -63,7 +66,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
 
   const provenance = opts.demo
     ? '🧪 *DEMO FIXTURE* · sample JRS+Brightly data (not live)'
-    : `🟢 *LIVE* · synced ${opts.syncedAt ?? 'just now'} · from M42 Central Task Tracker`
+    : liveProvenance(opts.syncedAtMs, opts.now)
 
   const blocks: Block[] = [
     header('Agent M42 · Portfolio Cockpit'),
