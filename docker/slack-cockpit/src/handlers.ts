@@ -103,6 +103,15 @@ export function registerHandlers(app: App, cfg: Config): void {
     await publishForUser(client, cfg, body.user.id)
   })
 
+  // Home "See all N ready / shipped" deep-links → the board pre-filtered to that
+  // status in ONE tap (e.g. open_board_status:done, open_board_status:delivered_awaiting).
+  app.action(/^open_board_status:/, async ({ ack, action, body, client }: any) => {
+    await ack()
+    const status = String(action.action_id).split(':').slice(1).join(':') as StatusFilter
+    setState(body.user.id, { kind: 'board', filters: { status }, sort: 'updated', page: 0 })
+    await publishForUser(client, cfg, body.user.id)
+  })
+
   app.action('back_to_home', async ({ ack, body, client }: any) => {
     await ack()
     setState(body.user.id, { kind: 'portfolio' })

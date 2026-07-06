@@ -1,3 +1,4 @@
+import { hasDeliverableLink } from './model.js'
 import type { CanonicalStatus, CompanyRollup, Task } from './model.js'
 
 /**
@@ -75,7 +76,10 @@ export function normalizeActor(rawOwnerNext: string | undefined): Actor {
 
 export function companyHealth(tasks: Task[]): CompanyRollup['health'] {
   if (tasks.some((t) => t.status === 'blocked' || t.status === 'needs_you')) return 'blocked'
-  if (tasks.some((t) => t.status === 'delivered_awaiting' || t.status === 'changes_requested'))
+  // A delivered-WITH-link task now reads as "Ready for review" (positive) on the
+  // Home, so it no longer drags its company to At-risk here. A change-request, or
+  // a delivered task with NO access link (a defect), still does.
+  if (tasks.some((t) => t.status === 'changes_requested' || (t.status === 'delivered_awaiting' && !hasDeliverableLink(t))))
     return 'at_risk'
   return 'on_track'
 }

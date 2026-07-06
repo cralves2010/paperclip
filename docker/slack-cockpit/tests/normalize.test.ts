@@ -86,6 +86,12 @@ test('companyHealth: blocked when any task is blocked or needs_you', () => {
   expect(companyHealth([t('in_progress'), t('delivered_awaiting')])).toBe('at_risk')
 })
 
+test('companyHealth: a delivered task WITH a link is on_track ("Ready for review", not At-risk)', () => {
+  const base: Task = { taskNum: '1', company: 'JRS', title: 'x', owner: 'a', status: 'delivered_awaiting', rawStatus: '' }
+  expect(companyHealth([{ ...base, deliverableDriveUrl: 'https://d/1' }])).toBe('on_track')
+  expect(companyHealth([base])).toBe('at_risk') // delivered but linkless is still a risk
+})
+
 test('rollupCounts buckets in-progress/awaiting/blocked', () => {
   const counts = rollupCounts([t('in_progress'), t('queued'), t('delivered_awaiting'), t('needs_you'), t('blocked')])
   expect(counts).toEqual({ inProgress: 2, awaiting: 2, blocked: 1 })

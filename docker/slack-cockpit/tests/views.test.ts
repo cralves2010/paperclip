@@ -86,6 +86,67 @@ test('home view stays under the ~100-block App Home ceiling with many companies'
   expect(JSON.stringify(view)).toContain('more companies')
 })
 
+test('home: delivered_awaiting WITH a link surfaces under "📬 Ready for review", not the decision groups', () => {
+  const tasks = [
+    t({ taskNum: '42', company: 'JRS', status: 'delivered_awaiting', title: 'ready doc', ownerNext: 'Derek', deliverableDriveUrl: 'https://docs.google.com/x' }),
+  ]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json).toContain('Ready for review')
+  expect(json.indexOf('Ready for review')).toBeLessThan(json.indexOf('Needs Derek'))
+  expect(json).toContain('https://docs.google.com/x') // inline deliverable link
+  expect(json).toContain('Review') // the primary verb
+  expect(json).toContain('👤 Derek') // explicit actor tag (shared view)
+  // NOT duplicated into the "Needs Derek" decision group.
+  expect(json.slice(json.indexOf('Needs Derek'))).not.toContain('JRS-42')
+})
+
+test('home: delivered/done WITHOUT a link surfaces under "⚠️ Delivered — link missing"', () => {
+  const tasks = [
+    t({ taskNum: '5', company: 'JRS', status: 'delivered_awaiting', title: 'no link yet', ownerNext: 'Claudio' }),
+    t({ taskNum: '9', company: 'BAM', status: 'done', title: 'done no link' }),
+  ]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json).toContain('Delivered — link missing')
+  expect(json).toContain('no link')
+  expect(json).toContain('JRS-5')
+  expect(json).toContain('BAM-9')
+})
+
+test('home: "🎉 Recently shipped" counts done even when every lastUpdatedTs is undefined', () => {
+  const tasks = [
+    t({ taskNum: '1', company: 'JRS', status: 'done', deliverableDriveUrl: 'https://d/1' }),
+    t({ taskNum: '2', company: 'BAM', status: 'done' }),
+  ]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json).toContain('🎉 *2 shipped*')
+  expect(json).toContain('open_board_status:done') // one-tap deep-link to the Done-filtered board
+})
+
+test('home: section titles stay actor-neutral (never "your review")', () => {
+  const tasks = [t({ status: 'delivered_awaiting', deliverableDriveUrl: 'https://d/1', ownerNext: 'Derek' })]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' })).toLowerCase()
+  expect(json).toContain('ready for review')
+  expect(json).not.toContain('your review')
+})
+
+test('home: worst-case fixture (ready + shipped + 3 decision groups + link-missing + 30 companies) stays < 100 blocks', () => {
+  const tasks: Task[] = []
+  for (let i = 0; i < 30; i++) tasks.push(t({ taskNum: `co${i}`, company: `Co${i}`, status: 'in_progress' }))
+  for (let i = 0; i < 7; i++) tasks.push(t({ taskNum: `r${i}`, company: 'JRS', status: 'delivered_awaiting', ownerNext: 'Derek', deliverableDriveUrl: `https://d/${i}` }))
+  for (let i = 0; i < 4; i++) tasks.push(t({ taskNum: `s${i}`, company: 'BAM', status: 'done', deliverableDriveUrl: `https://s/${i}` }))
+  for (let i = 0; i < 6; i++) {
+    tasks.push(t({ taskNum: `d${i}`, company: 'JRS', status: 'needs_you', ownerNext: 'Derek' }))
+    tasks.push(t({ taskNum: `c${i}`, company: 'JRS', status: 'changes_requested', ownerNext: 'Claudio' }))
+    tasks.push(t({ taskNum: `x${i}`, company: 'JRS', status: 'needs_you' }))
+  }
+  for (let i = 0; i < 5; i++) tasks.push(t({ taskNum: `m${i}`, company: 'ENT', status: 'delivered_awaiting' }))
+  const view = buildHomeView(tasks, { kind: 'portfolio' })
+  expect(view.blocks.length).toBeLessThan(100)
+  expect(JSON.stringify(view)).toContain('📬 Ready for review')
+  expect(JSON.stringify(view)).toContain('🎉 Recently shipped')
+  expect(JSON.stringify(view)).toContain('⚠️ Delivered — link missing')
+})
+
 test('task modal clamps description and never emits a URL button without a URL', () => {
   const json = JSON.stringify(buildTaskModal(t({ description: 'x'.repeat(5000), deliverableDriveUrl: undefined })))
   expect(json).not.toContain('"url"')

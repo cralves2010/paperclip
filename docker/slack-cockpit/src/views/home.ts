@@ -9,31 +9,45 @@ import {
   type HomeView,
 } from '../blocks.js'
 import {
-  NEEDS_YOU_STATUSES,
   STATUS_EMOJI,
   STATUS_LABEL,
+  hasDeliverableLink,
+  isDeliveredWithoutLink,
+  type CanonicalStatus,
   type Task,
   type ViewState,
 } from '../model.js'
 import { companyHealth, normalizeActor, rollupCounts, type Actor } from '../normalize.js'
-import { clamp, countLine, liveProvenance, taskRef } from '../text.js'
+import { clamp, countLine, liveProvenance, relativeAge, taskRef } from '../text.js'
 
-// App Home hard-caps at ~100 blocks. Budget (worst case):
-//   chrome 4 + 3 actor groups × (header + 5 rows + context) = 21
-//   + Portfolio divider/header 2 + 30×2 companies + overflow context 1 + footer 2
-//   = 90 blocks. Overflow is summarized + reachable via the All-tasks board.
-// (Was 40 companies when Needs-You was a single 7-block group; the actor split
-// added up to 14 blocks, so the company cap drops to 30 to stay safely under.)
-const PORTFOLIO_CAP = 30
-const GROUP_CAP = 5 // max hero rows per actor group
+// App Home hard-caps at ~100 blocks. Worst case with this layout ≈ 89 (11-block
+// margin — asserted in tests/views.test.ts). Top to bottom: chrome → 📬 Ready
+// for review → 🎉 Recently shipped → the Needs-a-decision actor groups →
+// ⚠️ Delivered—link missing → 📊 Portfolio Health → footer. The two positive
+// sections are funded by dropping PORTFOLIO_CAP 30→18 (real portfolio ≈10
+// companies, so 18 never truncates in practice — pure headroom, no info loss).
+const PORTFOLIO_CAP = 18
+const GROUP_CAP = 5 // max rows per Needs-a-decision actor group
+const REVIEW_CAP = 6 // max rows in "Ready for review"
+const SHIP_CAP = 3 // max spot-check rows in "Recently shipped"
+const LINK_CAP = 4 // max rows in "Delivered — link missing"
+
+// "Needs a decision" = ONLY genuine decisions / change-requests. delivered_awaiting
+// has moved OUT of this zone: linked → "📬 Ready for review", linkless →
+// "⚠️ Delivered — link missing". So "Needs Derek" now means a real decision.
+const DECISION_STATUSES: CanonicalStatus[] = ['needs_you', 'changes_requested']
 
 const HEALTH_DOT = { on_track: '🟢', at_risk: '🟡', blocked: '🔴' } as const
 const HEALTH_WORD = { on_track: 'On track', at_risk: 'At risk', blocked: 'Blocked' } as const
-const NEEDS_ORDER: Record<string, number> = { needs_you: 0, changes_requested: 1, delivered_awaiting: 2 }
 
-// Shared (not per-viewer) on purpose: transparency is the point — Derek sees
-// what's on Claudio, Claudio sees what's on Derek. "Needs the team" renders
-// only when non-empty; Derek/Claudio headers always render.
+// Explicit actor tag — the Home is one shared view published identically to
+// Derek AND Claudio, so a row NEVER means "yours" by omission; it always names
+// whose move it is. (Same reason section titles stay actor-neutral: "Ready for
+// review", never "YOUR review".)
+const ACTOR_LABEL: Record<Actor, string> = { derek: '👤 Derek', claudio: '👤 Claudio', team: '👤 Team' }
+const ACTOR_TIER: Record<Actor, number> = { derek: 0, claudio: 1, team: 2 }
+const DECISION_ORDER: Record<string, number> = { needs_you: 0, changes_requested: 1 }
+
 const NEEDS_GROUPS: { actor: Actor; title: string; empty: string }[] = [
   { actor: 'derek', title: '🔴 Needs Derek', empty: 'Nothing waiting on Derek right now.' },
   { actor: 'claudio', title: '🟠 Needs Claudio', empty: 'Nothing waiting on Claudio right now.' },
@@ -49,20 +63,69 @@ export interface HomeOpts {
   commentCounts?: Map<string, number>
 }
 
-function needsYouRow(t: Task, counts?: Map<string, number>): Block {
+// ── sort / format helpers ───────────────────────────────────────────────────
+function numRank(t: Task): number {
+  const n = parseInt((t.taskNum ?? '').replace(/[^\d-]/g, ''), 10)
+  return Number.isNaN(n) ? Number.POSITIVE_INFINITY : n
+}
+function tsOf(t: Task): number {
+  return t.lastUpdatedTs ?? Number.NEGATIVE_INFINITY
+}
+/** Most-recently-updated first; undated last; Task# as the final tiebreak. */
+function byRecent(a: Task, b: Task): number {
+  return tsOf(b) - tsOf(a) || numRank(a) - numRank(b)
+}
+function deliverableUrl(t: Task): string | undefined {
+  return t.deliverableDriveUrl || t.deliverableSlackUrl || t.deliverableOtherUrl
+}
+function linkLabel(t: Task): string {
+  return t.deliverableDriveUrl ? '📄 Open' : t.deliverableSlackUrl ? '💬 Open' : '🔗 Open'
+}
+function commentBadge(counts: Map<string, number> | undefined, t: Task): string {
   const n = counts?.get(t.taskNum) ?? 0
-  const badge = n > 0 ? ` · 💬 ${n}` : ''
+  return n > 0 ? ` · 💬 ${n}` : ''
+}
+
+/** 📬 Ready-for-review row: an inline mrkdwn deliverable link (zero handler) + a primary "Review" verb. */
+function reviewRow(t: Task, counts?: Map<string, number>): Block {
+  const actor = ACTOR_LABEL[normalizeActor(t.ownerNext)]
+  const url = deliverableUrl(t)!
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}${badge}`,
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI.delivered_awaiting} ${STATUS_LABEL.delivered_awaiting} · ${actor}${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
+    button('Review', `open_task:${t.taskNum}`, { primary: true }),
+  )
+}
+
+/** 🎉 Recently-shipped spot-check row: grey (settled) "Open" + inline "View" link. */
+function shippedRow(t: Task, counts?: Map<string, number>): Block {
+  const url = deliverableUrl(t)!
+  return section(
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI.done} ${STATUS_LABEL.done}${commentBadge(counts, t)} · <${url}|📄 View>`,
+    button('Open', `open_task:${t.taskNum}`),
+  )
+}
+
+/** Needs-a-decision hero row (unchanged format): primary "Open". */
+function decisionRow(t: Task, counts?: Map<string, number>): Block {
+  return section(
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}${commentBadge(counts, t)}`,
+    button('Open', `open_task:${t.taskNum}`, { primary: true }),
+  )
+}
+
+/** ⚠️ Delivered-but-linkless defect row — bold + individually openable, never a folded count. */
+function missingRow(t: Task, counts?: Map<string, number>): Block {
+  const actor = ACTOR_LABEL[normalizeActor(t.ownerNext)]
+  return section(
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]} · ⚠️ no link · ${actor}${commentBadge(counts, t)}`,
     button('Open', `open_task:${t.taskNum}`, { primary: true }),
   )
 }
 
 export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts = {}): HomeView {
   const companies = [...new Set(tasks.map((t) => t.company))].sort()
-  const needsYou = tasks
-    .filter((t) => NEEDS_YOU_STATUSES.includes(t.status))
-    .sort((a, b) => (NEEDS_ORDER[a.status] ?? 9) - (NEEDS_ORDER[b.status] ?? 9))
+  const counts = opts.commentCounts
+  const now = opts.now ?? Date.now()
 
   const provenance = opts.demo
     ? '🧪 *DEMO FIXTURE* · sample JRS+Brightly data (not live)'
@@ -80,24 +143,81 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     divider(),
   ]
 
-  // Group the act-needed heroes by whose move it is (Derek's Owner-next column).
+  // ── 📬 Ready for review — finished deliverables Derek can open right now.
+  // Derek's own items float first, then most-recent. Hidden entirely when empty
+  // (an empty review inbox is noise on a CEO board; its absence IS the signal).
+  const ready = tasks
+    .filter((t) => t.status === 'delivered_awaiting' && hasDeliverableLink(t))
+    .sort(
+      (a, b) =>
+        ACTOR_TIER[normalizeActor(a.ownerNext)] - ACTOR_TIER[normalizeActor(b.ownerNext)] || byRecent(a, b),
+    )
+  if (ready.length > 0) {
+    blocks.push(header('📬 Ready for review'))
+    for (const t of ready.slice(0, REVIEW_CAP)) blocks.push(reviewRow(t, counts))
+    if (ready.length > REVIEW_CAP) {
+      blocks.push(actions([button(`📋 See all ${ready.length} ready`, 'open_board_status:delivered_awaiting')]))
+    }
+  }
+
+  // ── 🎉 Recently shipped — the wins. Count is timestamp-INDEPENDENT (honest
+  // even when "Last updated" cells are blank); the spot-check rows need a link.
+  const done = tasks.filter((t) => t.status === 'done')
+  if (done.length > 0) {
+    blocks.push(divider(), header('🎉 Recently shipped'))
+    const companiesWithDone = new Set(done.map((t) => t.company)).size
+    const newest = done.slice().sort(byRecent)[0]
+    const tail = newest.lastUpdatedTs != null ? ` · latest \`${taskRef(newest)}\` ${relativeAge(now - newest.lastUpdatedTs)}` : ''
+    blocks.push(
+      context(`🎉 *${done.length} shipped* · ${companiesWithDone} ${companiesWithDone === 1 ? 'company' : 'companies'}${tail}`),
+    )
+    for (const t of done.filter(hasDeliverableLink).sort(byRecent).slice(0, SHIP_CAP)) blocks.push(shippedRow(t, counts))
+    blocks.push(actions([button(`📋 See all ${done.length} shipped`, 'open_board_status:done')]))
+  }
+
+  // ── Needs a decision — genuine decisions / change-requests, grouped by whose
+  // move it is. delivered_awaiting no longer lives here (see DECISION_STATUSES).
+  const decisions = tasks.filter((t) => DECISION_STATUSES.includes(t.status))
   const byActor = new Map<Actor, Task[]>()
-  for (const t of needsYou) {
+  for (const t of decisions) {
     const actor = normalizeActor(t.ownerNext)
     byActor.set(actor, [...(byActor.get(actor) ?? []), t])
   }
+  blocks.push(divider())
   for (const g of NEEDS_GROUPS) {
-    const items = byActor.get(g.actor) ?? []
+    const items = (byActor.get(g.actor) ?? []).sort(
+      (a, b) => (DECISION_ORDER[a.status] ?? 9) - (DECISION_ORDER[b.status] ?? 9) || byRecent(a, b),
+    )
     if (g.actor === 'team' && items.length === 0) continue
     blocks.push(header(g.title))
     if (items.length === 0) {
       blocks.push(context(g.empty))
     } else {
-      for (const t of items.slice(0, GROUP_CAP)) blocks.push(needsYouRow(t, opts.commentCounts))
-      blocks.push(context(`Showing ${Math.min(items.length, GROUP_CAP)} of ${items.length}`))
+      for (const t of items.slice(0, GROUP_CAP)) blocks.push(decisionRow(t, counts))
+      const more = items.length > GROUP_CAP ? ' · more in 📋 All tasks' : ''
+      blocks.push(context(`Showing ${Math.min(items.length, GROUP_CAP)} of ${items.length}${more}`))
     }
   }
 
+  // ── ⚠️ Delivered — link missing — the defect: claimed delivered/done with no
+  // openable link. Placed below decisions (the fix is Claudio/team's move) but
+  // individually visible & openable — never a buried grey count. Both people
+  // open this shared Home, so nothing linkless is ever faked as "ready".
+  const missing = tasks
+    .filter(isDeliveredWithoutLink)
+    .sort(
+      (a, b) =>
+        (a.status === 'delivered_awaiting' ? 0 : 1) - (b.status === 'delivered_awaiting' ? 0 : 1) || numRank(a) - numRank(b),
+    )
+  if (missing.length > 0) {
+    blocks.push(divider(), header('⚠️ Delivered — link missing'))
+    for (const t of missing.slice(0, LINK_CAP)) blocks.push(missingRow(t, counts))
+    if (missing.length > LINK_CAP) {
+      blocks.push(context(`Showing ${LINK_CAP} of ${missing.length} · Claudio to attach links`))
+    }
+  }
+
+  // ── 📊 Portfolio Health (unchanged except PORTFOLIO_CAP).
   blocks.push(divider(), header('📊 Portfolio Health'))
   const shownCompanies = companies.slice(0, PORTFOLIO_CAP)
   for (const company of shownCompanies) {
