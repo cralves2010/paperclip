@@ -18,17 +18,19 @@ import {
   type ViewState,
 } from '../model.js'
 import { companyHealth, normalizeActor, rollupCounts, type Actor } from '../normalize.js'
-import { clamp, countLine, liveProvenance, relativeAge, taskRef } from '../text.js'
+import { clamp, coarseAge, countLine, liveProvenance, taskRef } from '../text.js'
 
-// App Home hard-caps at ~100 blocks. Worst case with this layout ≈ 89 (11-block
-// margin — asserted in tests/views.test.ts). Top to bottom: chrome → 📬 Ready
-// for review → 🎉 Recently shipped → the Needs-a-decision actor groups →
-// ⚠️ Delivered—link missing → 📊 Portfolio Health → footer. The two positive
-// sections are funded by dropping PORTFOLIO_CAP 30→18 (real portfolio ≈10
-// companies, so 18 never truncates in practice — pure headroom, no info loss).
-const PORTFOLIO_CAP = 18
+// App Home hard-caps at ~100 blocks. Worst case with this 6-section layout ≈ 86
+// (14-block margin — asserted in tests/views.test.ts). Top to bottom: chrome →
+// 📬 Ready for review → 🚧 Preview ready (parked) → 🎉 Recently shipped → the
+// Needs-a-decision actor groups → ⚠️ Delivered—link missing → 📊 Portfolio
+// Health → footer. The positive/preview sections are funded by dropping
+// PORTFOLIO_CAP 30→18→12 (real portfolio ≈10 companies, so 12 never truncates in
+// practice — pure headroom; any growth folds into "…and N more companies").
+const PORTFOLIO_CAP = 12
 const GROUP_CAP = 5 // max rows per Needs-a-decision actor group
 const REVIEW_CAP = 6 // max rows in "Ready for review"
+const PARKED_CAP = 5 // max rows in "Preview ready — waiting on an input"
 const SHIP_CAP = 3 // max spot-check rows in "Recently shipped"
 const LINK_CAP = 4 // max rows in "Delivered — link missing"
 
@@ -36,6 +38,13 @@ const LINK_CAP = 4 // max rows in "Delivered — link missing"
 // has moved OUT of this zone: linked → "📬 Ready for review", linkless →
 // "⚠️ Delivered — link missing". So "Needs Derek" now means a real decision.
 const DECISION_STATUSES: CanonicalStatus[] = ['needs_you', 'changes_requested']
+
+// "🚧 Preview ready — waiting on an input" = a finished deliverable EXISTS but the
+// task is still in flight, so it is NOT a clean hand-off. Requires a link (so it
+// never overlaps ⚠️ link-missing) and claims ONLY these two statuses —
+// needs_you / changes_requested stay genuine decisions, delivered_awaiting stays
+// a clean hand-off — so every task lands in exactly one hero by construction.
+const PARKED_STATUSES: CanonicalStatus[] = ['in_progress', 'blocked']
 
 const HEALTH_DOT = { on_track: '🟢', at_risk: '🟡', blocked: '🔴' } as const
 const HEALTH_WORD = { on_track: 'On track', at_risk: 'At risk', blocked: 'Blocked' } as const
@@ -78,29 +87,58 @@ function byRecent(a: Task, b: Task): number {
 function deliverableUrl(t: Task): string | undefined {
   return t.deliverableDriveUrl || t.deliverableSlackUrl || t.deliverableOtherUrl
 }
+/** Inline deliverable link label = the NOUN of the destination (a Doc/Thread/Link),
+ * so it never collides with the row's button VERB (Review / Open the modal). */
 function linkLabel(t: Task): string {
-  return t.deliverableDriveUrl ? '📄 Open' : t.deliverableSlackUrl ? '💬 Open' : '🔗 Open'
+  return t.deliverableDriveUrl ? '📄 Doc' : t.deliverableSlackUrl ? '💬 Thread' : '🔗 Link'
 }
 function commentBadge(counts: Map<string, number> | undefined, t: Task): string {
   const n = counts?.get(t.taskNum) ?? 0
   return n > 0 ? ` · 💬 ${n}` : ''
 }
 
-/** 📬 Ready-for-review row: an inline mrkdwn deliverable link (zero handler) + a primary "Review" verb. */
+// What a parked task is waiting on: prefer the explicit dependency field, else a
+// status cell that actually reads like a blocker, else a safe generic. Never invents.
+const PARKED_NEED_RE = /need|await|wait|gate|block|pending|depend/i
+function parkedWaitingText(t: Task): string {
+  const dep = t.dependency?.trim()
+  if (dep) return clamp(dep, 90)
+  const raw = t.rawStatus?.trim()
+  if (raw && PARKED_NEED_RE.test(raw)) return clamp(raw, 90)
+  return 'an input — open for details'
+}
+
+/** 📬 Ready-for-review row: inline deliverable link (zero handler) + a primary
+ * "Review" verb. The status token is omitted — the section header already says
+ * "Delivered / awaiting", and dropping it keeps the meta line off a phone's 2nd row. */
 function reviewRow(t: Task, counts?: Map<string, number>): Block {
   const actor = ACTOR_LABEL[normalizeActor(t.ownerNext)]
   const url = deliverableUrl(t)!
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI.delivered_awaiting} ${STATUS_LABEL.delivered_awaiting} · ${actor}${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${actor}${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
     button('Review', `open_task:${t.taskNum}`, { primary: true }),
   )
 }
 
-/** 🎉 Recently-shipped spot-check row: grey (settled) "Open" + inline "View" link. */
+/** 🚧 Preview-ready row: a finished preview to peek at, PLUS what it waits on + who.
+ * Grey "Open" (a peek/nudge, not the primary "Review" verdict of a clean hand-off);
+ * the inline link is "👀 Preview" (a draft), deliberately not "📄 Doc". */
+function parkedRow(t: Task, counts?: Map<string, number>): Block {
+  const url = deliverableUrl(t)!
+  const actor = ACTOR_LABEL[normalizeActor(t.ownerNext)]
+  return section(
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\`${commentBadge(counts, t)} · <${url}|👀 Preview>\n⏳ ${actor} · ${parkedWaitingText(t)}`,
+    button('Open', `open_task:${t.taskNum}`),
+  )
+}
+
+/** 🎉 Recently-shipped spot-check row: grey (settled) "Open" + inline destination
+ * link. Status token omitted (the "Recently shipped" header already says Done);
+ * the link uses linkLabel() so a Slack-thread win shows 💬 Thread, not a false 📄. */
 function shippedRow(t: Task, counts?: Map<string, number>): Block {
   const url = deliverableUrl(t)!
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI.done} ${STATUS_LABEL.done}${commentBadge(counts, t)} · <${url}|📄 View>`,
+    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\`${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
     button('Open', `open_task:${t.taskNum}`),
   )
 }
@@ -133,7 +171,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
 
   const blocks: Block[] = [
     header('Agent M42 · Portfolio Cockpit'),
-    context(`${provenance} · Legend: 🟢 On track · 🟡 At risk · 🔴 Blocked`),
+    context(provenance),
     actions([
       button('🔄 Refresh', 'refresh_home'),
       button('📋 All tasks', 'open_board'),
@@ -160,6 +198,25 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     }
   }
 
+  // ── 🚧 Preview ready — waiting on an input — a finished preview EXISTS but the
+  // task is still in-flight/blocked on an input, so it's not a clean hand-off yet.
+  // Invisible today (feeds only Portfolio counts). Derek's own inputs float first.
+  const parked = tasks
+    .filter((t) => PARKED_STATUSES.includes(t.status) && hasDeliverableLink(t))
+    .sort(
+      (a, b) =>
+        ACTOR_TIER[normalizeActor(a.ownerNext)] - ACTOR_TIER[normalizeActor(b.ownerNext)] || byRecent(a, b),
+    )
+  if (parked.length > 0) {
+    blocks.push(divider(), header('🚧 Preview ready — waiting on an input'))
+    for (const t of parked.slice(0, PARKED_CAP)) blocks.push(parkedRow(t, counts))
+    if (parked.length > PARKED_CAP) {
+      // UNFILTERED all-tasks — the section spans in_progress+blocked, so a
+      // status-filtered deep-link would drop the other half.
+      blocks.push(actions([button(`📋 See all ${parked.length} parked`, 'open_board')]))
+    }
+  }
+
   // ── 🎉 Recently shipped — the wins. Count is timestamp-INDEPENDENT (honest
   // even when "Last updated" cells are blank); the spot-check rows need a link.
   const done = tasks.filter((t) => t.status === 'done')
@@ -167,7 +224,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     blocks.push(divider(), header('🎉 Recently shipped'))
     const companiesWithDone = new Set(done.map((t) => t.company)).size
     const newest = done.slice().sort(byRecent)[0]
-    const tail = newest.lastUpdatedTs != null ? ` · latest \`${taskRef(newest)}\` ${relativeAge(now - newest.lastUpdatedTs)}` : ''
+    const tail = newest.lastUpdatedTs != null ? ` · latest \`${taskRef(newest)}\` ${coarseAge(now - newest.lastUpdatedTs)}` : ''
     blocks.push(
       context(`🎉 *${done.length} shipped* · ${companiesWithDone} ${companiesWithDone === 1 ? 'company' : 'companies'}${tail}`),
     )
@@ -194,8 +251,9 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
       blocks.push(context(g.empty))
     } else {
       for (const t of items.slice(0, GROUP_CAP)) blocks.push(decisionRow(t, counts))
-      const more = items.length > GROUP_CAP ? ' · more in 📋 All tasks' : ''
-      blocks.push(context(`Showing ${Math.min(items.length, GROUP_CAP)} of ${items.length}${more}`))
+      // Only show the counter when rows were actually hidden — "Showing 1 of 1"
+      // under a one-row group is pure noise (the row is right there).
+      if (items.length > GROUP_CAP) blocks.push(context(`Showing ${GROUP_CAP} of ${items.length} · more in 📋 All tasks`))
     }
   }
 
@@ -217,8 +275,9 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     }
   }
 
-  // ── 📊 Portfolio Health (unchanged except PORTFOLIO_CAP).
-  blocks.push(divider(), header('📊 Portfolio Health'))
+  // ── 📊 Portfolio Health. The color Legend lives here, next to the 🟢🟡🔴 dots
+  // it explains (moved off the top freshness line, which now scans as pure "when synced").
+  blocks.push(divider(), header('📊 Portfolio Health'), context('Legend: 🟢 On track · 🟡 At risk · 🔴 Blocked'))
   const shownCompanies = companies.slice(0, PORTFOLIO_CAP)
   for (const company of shownCompanies) {
     const ct = tasks.filter((t) => t.company === company)

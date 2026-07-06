@@ -13,7 +13,7 @@ export type CanonicalStatus =
 export const STATUS_LABEL: Record<CanonicalStatus, string> = {
   queued: 'Queued',
   in_progress: 'In progress',
-  delivered_awaiting: 'Delivered – awaiting you',
+  delivered_awaiting: 'Delivered – awaiting review',
   needs_you: 'Needs you',
   changes_requested: 'Changes requested',
   blocked: 'Blocked',

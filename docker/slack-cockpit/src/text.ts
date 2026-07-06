@@ -51,6 +51,20 @@ export function relativeAge(ageMs: number): string {
   return r ? `${h}h ${r}m ago` : `${h}h ago`
 }
 
+/**
+ * Coarser age for "shipped a while ago" — drops minute precision noise
+ * ("26h 24m ago" → "yesterday"). Kept separate from relativeAge, which the
+ * freshness line needs at minute granularity to signal a stalled sync.
+ */
+export function coarseAge(ageMs: number): string {
+  const mins = Math.floor(Math.max(0, ageMs) / MIN_MS)
+  if (mins < 60) return 'just now'
+  const h = Math.floor(mins / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  return d === 1 ? 'yesterday' : `${d} days ago`
+}
+
 /** Absolute clock in Derek's timezone, e.g. "Jul 5, 2:32 PM MST". */
 export function formatSyncClock(ms: number, tz = 'America/Phoenix'): string {
   return new Date(ms).toLocaleString('en-US', {

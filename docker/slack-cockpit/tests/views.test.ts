@@ -63,7 +63,7 @@ test('home view groups act-needed tasks by Owner-next actor, capped at 5 per gro
   )
   expect(json).toContain('Needs the team')
   expect(json).toContain('Showing 5 of 7') // Derek group capped
-  expect(json).toContain('Showing 1 of 1')
+  expect(json).not.toContain('Showing 1 of 1') // 1-row groups no longer print a redundant counter
   // Hero affordances survive the actor-group refactor: primary Open button + 💬 badge.
   expect(json).toContain('open_task:d0')
   expect(json).toContain('"style":"primary"')
@@ -94,7 +94,9 @@ test('home: delivered_awaiting WITH a link surfaces under "📬 Ready for review
   expect(json).toContain('Ready for review')
   expect(json.indexOf('Ready for review')).toBeLessThan(json.indexOf('Needs Derek'))
   expect(json).toContain('https://docs.google.com/x') // inline deliverable link
-  expect(json).toContain('Review') // the primary verb
+  expect(json).toContain('Review') // the primary verb (button = open the modal)
+  expect(json).toContain('📄 Doc') // inline link is the destination NOUN, not a second "Open"
+  expect(json).not.toContain('Delivered – awaiting') // status token dropped from Ready rows (header says it)
   expect(json).toContain('👤 Derek') // explicit actor tag (shared view)
   // NOT duplicated into the "Needs Derek" decision group.
   expect(json.slice(json.indexOf('Needs Derek'))).not.toContain('JRS-42')
@@ -129,22 +131,67 @@ test('home: section titles stay actor-neutral (never "your review")', () => {
   expect(json).not.toContain('your review')
 })
 
-test('home: worst-case fixture (ready + shipped + 3 decision groups + link-missing + 30 companies) stays < 100 blocks', () => {
+test('home: worst-case fixture (all 6 sections maxed + 30 companies) stays < 100 blocks', () => {
   const tasks: Task[] = []
-  for (let i = 0; i < 30; i++) tasks.push(t({ taskNum: `co${i}`, company: `Co${i}`, status: 'in_progress' }))
+  for (let i = 0; i < 30; i++) tasks.push(t({ taskNum: `co${i}`, company: `Co${i}`, status: 'in_progress' })) // no link → Portfolio only
   for (let i = 0; i < 7; i++) tasks.push(t({ taskNum: `r${i}`, company: 'JRS', status: 'delivered_awaiting', ownerNext: 'Derek', deliverableDriveUrl: `https://d/${i}` }))
+  for (let i = 0; i < 6; i++) tasks.push(t({ taskNum: `p${i}`, company: 'JRS', status: i % 2 ? 'blocked' : 'in_progress', ownerNext: 'Derek', deliverableDriveUrl: `https://p/${i}`, dependency: 'waiting on input' })) // 🚧 parked maxes (5 + overflow)
   for (let i = 0; i < 4; i++) tasks.push(t({ taskNum: `s${i}`, company: 'BAM', status: 'done', deliverableDriveUrl: `https://s/${i}` }))
   for (let i = 0; i < 6; i++) {
     tasks.push(t({ taskNum: `d${i}`, company: 'JRS', status: 'needs_you', ownerNext: 'Derek' }))
     tasks.push(t({ taskNum: `c${i}`, company: 'JRS', status: 'changes_requested', ownerNext: 'Claudio' }))
     tasks.push(t({ taskNum: `x${i}`, company: 'JRS', status: 'needs_you' }))
   }
-  for (let i = 0; i < 5; i++) tasks.push(t({ taskNum: `m${i}`, company: 'ENT', status: 'delivered_awaiting' }))
+  for (let i = 0; i < 5; i++) tasks.push(t({ taskNum: `m${i}`, company: 'ENT', status: 'delivered_awaiting' })) // link-missing
   const view = buildHomeView(tasks, { kind: 'portfolio' })
-  expect(view.blocks.length).toBeLessThan(100)
-  expect(JSON.stringify(view)).toContain('📬 Ready for review')
-  expect(JSON.stringify(view)).toContain('🎉 Recently shipped')
-  expect(JSON.stringify(view)).toContain('⚠️ Delivered — link missing')
+  expect(view.blocks.length).toBeLessThan(100) // ≈86 with all 6 sections maxed + PORTFOLIO_CAP=12
+  const j = JSON.stringify(view)
+  expect(j).toContain('📬 Ready for review')
+  expect(j).toContain('🚧 Preview ready')
+  expect(j).toContain('🎉 Recently shipped')
+  expect(j).toContain('⚠️ Delivered — link missing')
+})
+
+test('home: in_progress/blocked WITH a link surfaces under "🚧 Preview ready", between Ready and Shipped', () => {
+  const tasks = [
+    t({ taskNum: '30', company: 'Brightly', status: 'in_progress', title: 'referral outreach', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/30', dependency: 'Your referral pricing' }),
+    t({ taskNum: '42', company: 'JRS', status: 'delivered_awaiting', title: 'ready', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/42' }),
+    t({ taskNum: '9', company: 'BAM', status: 'done', title: 'shipped', deliverableDriveUrl: 'https://d/9' }),
+  ]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json).toContain('🚧 Preview ready')
+  // placement: after Ready for review, before Recently shipped
+  expect(json.indexOf('Ready for review')).toBeLessThan(json.indexOf('🚧 Preview ready'))
+  expect(json.indexOf('🚧 Preview ready')).toBeLessThan(json.indexOf('Recently shipped'))
+  // content: a "👀 Preview" link + a ⏳ waiting line (actor + what it waits on)
+  expect(json).toContain('👀 Preview')
+  expect(json).toContain('⏳')
+  expect(json).toContain('Your referral pricing')
+  // the parked button is a grey peek/nudge, NOT the primary "Review" verdict
+  const parkedSlice = json.slice(json.indexOf('🚧 Preview ready'), json.indexOf('Recently shipped'))
+  expect(parkedSlice).toContain('👤 Derek')
+  expect(parkedSlice).not.toContain('"style":"primary"')
+})
+
+test('home: preview section dedups — a decision or a clean hand-off never lands in it', () => {
+  const tasks = [
+    t({ taskNum: '43', company: 'JRS', status: 'needs_you', title: 'decision', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/43' }), // needs_you+link → stays a decision
+    t({ taskNum: '42', company: 'JRS', status: 'delivered_awaiting', title: 'clean', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/42' }), // → Ready
+    t({ taskNum: '99', company: 'JRS', status: 'in_progress', title: 'no link' }), // in_progress WITHOUT link → Portfolio only
+  ]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json.slice(json.indexOf('Needs Derek'))).toContain('JRS-43') // decision stays under Needs Derek
+  expect(json).not.toContain('🚧 Preview ready') // nothing in_progress/blocked WITH a link → section hidden
+})
+
+test('home: preview overflow uses the UNFILTERED board so the blocked half is never dropped', () => {
+  const tasks: Task[] = []
+  for (let i = 0; i < 6; i++) tasks.push(t({ taskNum: `p${i}`, company: 'JRS', status: i % 2 ? 'blocked' : 'in_progress', ownerNext: 'Derek', deliverableDriveUrl: `https://d/${i}`, dependency: 'x' }))
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json).toContain('See all 6 parked')
+  // a status-filtered deep-link (open_board_status:in_progress|blocked) would drop one half
+  expect(json).not.toContain('open_board_status:in_progress')
+  expect(json).not.toContain('open_board_status:blocked')
 })
 
 test('task modal clamps description and never emits a URL button without a URL', () => {
