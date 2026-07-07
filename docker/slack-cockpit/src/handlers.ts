@@ -594,7 +594,9 @@ async function openVerdictReasonModal(client: any, triggerId: string, id: Verdic
     blocks: [plainInput('reason', label, 'reason_text', { multiline: true, maxLength: 900, placeholder })],
   }
   try {
-    await client.views.open({ trigger_id: triggerId, view })
+    // PUSH (not open): this modal is always raised from WITHIN the open task modal,
+    // so it stacks on top. views.open from a modal-internal trigger silently fails.
+    await client.views.push({ trigger_id: triggerId, view })
   } catch (err) {
     logErr('openVerdictReasonModal', err)
   }
