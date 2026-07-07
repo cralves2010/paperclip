@@ -75,22 +75,24 @@ export const VERDICTS: Record<VerdictId, Verdict> = {
 }
 
 /**
- * The verdict buttons Derek gets on a task. Returns [] unless the viewer IS Derek.
- * The forward verdicts (approve/request-changes/mark-done/answer) additionally
- * require it to be Derek's move (his Owner-next), so a shared modal never shows
- * Claudio/observers — or Derek on a task awaiting Claudio — a live verdict.
- * Reopen is allowed to Derek on any Done task (reversible, low-risk).
+ * The verdict buttons a PRINCIPAL (Derek OR Claudio) gets on a task, keyed to its
+ * status. Returns [] for observers (a random allowlisted viewer never gets a live
+ * verdict). Both principals see the same buttons on the same tasks — Claudio is the
+ * co-operator and must be able to act on, test, and evaluate the board exactly as
+ * Derek does (Claudio's request 2026-07-07). Every write is still CAS-guarded,
+ * confirmed, and reversible; the modal hero (deriveAsk) still names whose move it
+ * is, so context stays honest even though either principal can act.
  */
-export function verdictsFor(task: Task, isDerek: boolean, isDereksMove: boolean): Verdict[] {
-  if (!isDerek) return []
+export function verdictsFor(task: Task, isPrincipal: boolean): Verdict[] {
+  if (!isPrincipal) return []
   switch (task.status) {
     case 'delivered_awaiting':
       // No Approve on a linkless delivery (that is the isDeliveredWithoutLink defect).
-      return isDereksMove && hasDeliverableLink(task) ? [APPROVE, REQUEST_CHANGES] : []
+      return hasDeliverableLink(task) ? [APPROVE, REQUEST_CHANGES] : []
     case 'needs_you':
-      return isDereksMove ? [MARK_DONE, ANSWER_RELEASE] : []
+      return [MARK_DONE, ANSWER_RELEASE]
     case 'blocked':
-      return isDereksMove ? [ANSWER_RELEASE] : []
+      return [ANSWER_RELEASE]
     case 'done':
       return [REOPEN]
     default:

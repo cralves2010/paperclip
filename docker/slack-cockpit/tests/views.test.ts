@@ -256,14 +256,15 @@ test('task modal: a delivered/done task with NO link shows a LOUD missing-link w
   expect(linked).not.toMatch(/no access link/i)
 })
 
-test('task modal: Derek gets verdict buttons (with a confirm) on his delivered task; observer/Claudio do NOT', () => {
+test('task modal: BOTH principals (Derek + Claudio) get verdict buttons with a confirm; observers do NOT', () => {
   const task = t({ taskNum: '42', company: 'JRS', status: 'delivered_awaiting', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/1' })
-  const derek = JSON.stringify(buildTaskModal(task, [], 'derek'))
-  expect(derek).toContain('Your decision')
-  expect(derek).toContain('verdict:approve:42')
-  expect(derek).toContain('verdict:request_changes:42')
-  expect(derek).toContain('"confirm"') // Approve carries a native mis-tap confirm
-  // A shared modal never shows a live verdict to Claudio/observers.
+  for (const viewer of ['derek', 'claudio'] as const) {
+    const json = JSON.stringify(buildTaskModal(task, [], viewer))
+    expect(json).toContain('Your decision')
+    expect(json).toContain('verdict:approve:42')
+    expect(json).toContain('verdict:request_changes:42')
+    expect(json).toContain('"confirm"') // native mis-tap confirm
+  }
   const observer = JSON.stringify(buildTaskModal(task, [], 'observer'))
   expect(observer).not.toContain('Your decision')
   expect(observer).not.toContain('verdict:')

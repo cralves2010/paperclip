@@ -79,6 +79,9 @@ async function taskModalFor(cfg: Config, taskNum: string, userId: string): Promi
 
 export function registerHandlers(app: App, cfg: Config): void {
   const guard = (userId: string): boolean => isAllowed(userId, cfg.allowlist)
+  // A "principal" (Derek OR Claudio) may take verdict actions; observers may not.
+  // Claudio is the co-operator and tests/acts on the board exactly as Derek does.
+  const isPrincipal = (userId: string): boolean => userId === DEREK_USER_ID || userId === cfg.notifyUserId
 
   // ── Navigation ────────────────────────────────────────────────────────────
 
@@ -229,7 +232,7 @@ export function registerHandlers(app: App, cfg: Config): void {
   app.action(/^verdict:/, async ({ ack, action, body, client }: any) => {
     await ack()
     try {
-      if (body.user.id !== DEREK_USER_ID) return
+      if (!isPrincipal(body.user.id)) return
       const parts = String(action.action_id).split(':')
       const id = parts[1] as VerdictId
       const taskNum = parts[2]
@@ -250,7 +253,7 @@ export function registerHandlers(app: App, cfg: Config): void {
   })
 
   app.view('verdict_reason_submit', async ({ ack, view, body, client }: any) => {
-    if (body.user.id !== DEREK_USER_ID) {
+    if (!isPrincipal(body.user.id)) {
       await ack({ response_action: 'update', view: buildDeniedModal() })
       return
     }

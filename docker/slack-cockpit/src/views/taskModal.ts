@@ -41,11 +41,11 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
     section(`*Where it stands*\n${STATUS_EMOJI[task.status]} ${STATUS_LABEL[task.status]} — ${STATUS_EXPLAINER[task.status]}`),
   ]
 
-  // (4b) Your decision — Derek's verdict buttons, rendered ONLY for Derek and
-  // (for the forward verdicts) only when it's his move. Direct-write verdicts
-  // carry a native confirm (mis-tap guard); Request-changes / Answer open a
-  // required-reason modal instead. Every write is CAS-guarded + reversible.
-  const verdicts = verdictsFor(task, viewer === 'derek', move === 'derek')
+  // (4b) Your decision — verdict buttons for a PRINCIPAL (Derek OR Claudio), keyed
+  // to status; observers get none. Direct-write verdicts carry a native confirm
+  // (mis-tap guard); Request-changes / Answer open a required-reason modal. Every
+  // write is CAS-guarded + reversible.
+  const verdicts = verdictsFor(task, viewer === 'derek' || viewer === 'claudio')
   if (verdicts.length > 0) {
     blocks.push(
       context('*✅ Your decision*'),
