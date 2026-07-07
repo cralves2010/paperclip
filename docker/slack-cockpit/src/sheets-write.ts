@@ -14,6 +14,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { google } from 'googleapis'
 import type { Config } from './config.js'
+import type { CanonicalStatus } from './model.js'
+import { normalizeStatus } from './normalize.js'
 import { colIndex } from './sheets.js'
 
 /** Minimal shape of the googleapis Sheets client we use (and tests stub). */
@@ -257,4 +259,122 @@ export async function createTask(
     // swallow: the append succeeded; a verification read failure is not fatal
   }
   return { taskNum, warning: warnings.length ? warnings.join('; ') : undefined }
+}
+
+// ── writeStatus: the cockpit's ONLY status-changing write (Derek's verdict buttons) ──
+// This is the FIRST values.update the cockpit makes on an existing DATA row, so it
+// is deliberately paranoid — it guards Derek's source of truth.
+
+/** 0-based column index -> A1 letter (tracker has < 52 columns). */
+function colLetter(i: number): string {
+  return i < 26 ? String.fromCharCode(65 + i) : 'A' + String.fromCharCode(65 + (i - 26))
+}
+
+export interface WriteStatusInput {
+  taskNum: string
+  /** CAS precondition: the row's CURRENT canonical status must be one of these, else abort. */
+  expect: CanonicalStatus[]
+  /** Raw Status string to write (must normalize back to the intended canonical status). */
+  rawStatus: string
+  /** Optional Next-action (col K) to write alongside. */
+  nextAction?: string
+}
+
+export interface WriteStatusResult {
+  ok: boolean
+  reason?: 'not_found' | 'duplicate' | 'layout' | 'precondition' | 'row_shift'
+  /** Present on a precondition miss — the status the row is ACTUALLY in now. */
+  currentStatus?: CanonicalStatus
+  /** Non-fatal warning (e.g. a post-write row-shift was detected). */
+  warning?: string
+  message?: string
+}
+
+/**
+ * Compare-and-swap status write. Re-reads the tracker at write time, confirms the
+ * row's live canonical status still matches `expect` (defends the ≤60s stale cache
+ * AND a concurrent tracker.mjs window — a Slack confirm dialog does NOT defend
+ * staleness), then writes ONLY the whitelisted cells J(Status)/K(Next)/N(Updated)
+ * — never A-I or M (Owner-next, Derek's). Does NOT clear a live claim (respects
+ * tracker.mjs "no auto-steal"; the working window sees Done and releases itself).
+ */
+export async function writeStatus(
+  cfg: Config,
+  input: WriteStatusInput,
+  client: SheetsClient = realClient(cfg),
+): Promise<WriteStatusResult> {
+  const read = await client.spreadsheets.values.get({ spreadsheetId: cfg.sheetId, range: `'${cfg.trackerTab}'!A1:Z` })
+  const rows = (read?.data?.values ?? []) as string[][]
+  if (rows.length === 0) return { ok: false, reason: 'layout', message: 'tracker came back empty' }
+  const headers = rows[0].map((h) => (h ?? '').trim())
+  const iTask = colIndex(headers, ['Task #', 'Task#'])
+  const iStatus = colIndex(headers, ['Status'])
+  const iNext = colIndex(headers, ['Next action', 'Next Action'])
+  const iUpdated = colIndex(headers, ['Last Updated', 'Last updated'])
+  if (iTask < 0 || iStatus < 0 || iUpdated < 0) {
+    return { ok: false, reason: 'layout', message: 'Task #/Status/Last-updated columns not found — layout changed' }
+  }
+
+  // Defense-in-depth: the three write targets MUST be the Status/Next/Updated
+  // columns and NOTHING else. If a header rename ever collided a protected column
+  // (Task #, Business, Task, Owner, Priority, Owner-next) onto one of those three
+  // names, refuse rather than write onto Derek's data. Makes "never A-I / never M"
+  // an ENFORCED invariant, not just an observation about the current layout.
+  const protectedIdx = new Set(
+    [
+      iTask,
+      colIndex(headers, ['Business / Section', 'Business']),
+      colIndex(headers, ['Task']),
+      colIndex(headers, ['Owner']),
+      colIndex(headers, ['Priority Tier', 'Priority']),
+      colIndex(headers, ['Owner-next']),
+    ].filter((x) => x >= 0),
+  )
+  for (const w of [iStatus, iNext, iUpdated]) {
+    if (w >= 0 && protectedIdx.has(w)) {
+      return { ok: false, reason: 'layout', message: 'a protected column resolved onto a write target — refusing to write' }
+    }
+  }
+
+  const hits: number[] = []
+  for (let r = 1; r < rows.length; r++) {
+    if (((rows[r][iTask] ?? '') + '').trim() === String(input.taskNum).trim()) hits.push(r)
+  }
+  if (hits.length === 0) return { ok: false, reason: 'not_found' }
+  if (hits.length > 1) return { ok: false, reason: 'duplicate', message: `Task# ${input.taskNum} appears ${hits.length}×` }
+  const r = hits[0]
+
+  // CAS precondition — the live canonical status must still match what the button was shown for.
+  const current = normalizeStatus(((rows[r][iStatus] ?? '') + '').trim())
+  if (!input.expect.includes(current)) return { ok: false, reason: 'precondition', currentStatus: current }
+
+  const rowNum = r + 1
+  const put = (colIdx: number, value: string) =>
+    withRetry(() =>
+      client.spreadsheets.values.update({
+        spreadsheetId: cfg.sheetId,
+        range: `'${cfg.trackerTab}'!${colLetter(colIdx)}${rowNum}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [[value]] },
+      }),
+    )
+
+  await put(iStatus, input.rawStatus)
+  if (input.nextAction != null && iNext >= 0) await put(iNext, input.nextAction)
+  await put(iUpdated, today())
+
+  // Row-shift defense: confirm the row we wrote still carries this Task#.
+  try {
+    const check = await client.spreadsheets.values.get({ spreadsheetId: cfg.sheetId, range: `'${cfg.trackerTab}'!${colLetter(iTask)}${rowNum}` })
+    const got = ((check?.data?.values?.[0]?.[0] ?? '') + '').trim()
+    if (got !== String(input.taskNum).trim()) {
+      // A row shifted between the write-time read and the writes — the updates may
+      // have landed on the WRONG task's cells. Match tracker.mjs verifyRow: SCREAM,
+      // never report success. The caller halts and a human verifies the Sheet.
+      return { ok: false, reason: 'row_shift', message: `post-write row now shows Task# "${got}" (expected ${input.taskNum}) — a row-shift may have hit the wrong row; verify the Sheet` }
+    }
+  } catch {
+    // a verification read failure is not fatal; the write already succeeded.
+  }
+  return { ok: true }
 }

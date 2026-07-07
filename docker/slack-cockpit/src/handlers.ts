@@ -3,15 +3,17 @@ import type { Config } from './config.js'
 import { buildPrivateView, isAllowed } from './allowlist.js'
 import { getComments, getState, getTasks, invalidate, lastSyncAt, setState } from './state.js'
 import { commentCountByTask } from './sheets.js'
-import { appendComment, createTask } from './sheets-write.js'
+import { appendComment, createTask, writeStatus } from './sheets-write.js'
 import { dmClaudio, createDmText } from './notify.js'
 import { classifyAndCompose } from './classify.js'
-import { section, type ModalView } from './blocks.js'
-import { taskRef } from './text.js'
+import { plainInput, section, type ModalView } from './blocks.js'
+import { clamp, taskRef } from './text.js'
+import { STATUS_LABEL } from './model.js'
+import { VERDICTS, rawStatusFor, type VerdictId } from './verdicts.js'
 import { buildErrorView, buildHomeView } from './views/home.js'
 import { buildBoardView } from './views/board.js'
 import { buildTaskModal } from './views/taskModal.js'
-import { resolveViewer } from './views/didactic.js'
+import { DEREK_USER_ID, resolveViewer } from './views/didactic.js'
 import { buildSearchModal, buildSearchResults, searchTasks } from './views/search.js'
 import {
   attributeAuthor,
@@ -218,6 +220,59 @@ export function registerHandlers(app: App, cfg: Config): void {
     } catch (err) {
       logErr('comment_button', err)
     }
+  })
+
+  // ── Derek's verdict buttons: Approve / Mark done / Request changes / Answer / Reopen ──
+  // Only Derek can act (the buttons only render for him; re-checked here as
+  // defense-in-depth). Direct-write verdicts already passed a native confirm on
+  // the client; needsReason verdicts open a required-note modal first.
+  app.action(/^verdict:/, async ({ ack, action, body, client }: any) => {
+    await ack()
+    try {
+      if (body.user.id !== DEREK_USER_ID) return
+      const parts = String(action.action_id).split(':')
+      const id = parts[1] as VerdictId
+      const taskNum = parts[2]
+      const v = VERDICTS[id]
+      if (!v || !taskNum) return
+      if (cfg.demo) {
+        if (body.view?.id) await client.views.update({ view_id: body.view.id, view: buildDemoNoticeModal('comment') }).catch(() => {})
+        return
+      }
+      if (v.needsReason) {
+        await openVerdictReasonModal(client, body.trigger_id, id, taskNum)
+        return
+      }
+      await applyVerdict(client, cfg, id, taskNum, undefined, authorFor(body), body.user.id, body.view?.id)
+    } catch (err) {
+      logErr('verdict', err)
+    }
+  })
+
+  app.view('verdict_reason_submit', async ({ ack, view, body, client }: any) => {
+    if (body.user.id !== DEREK_USER_ID) {
+      await ack({ response_action: 'update', view: buildDeniedModal() })
+      return
+    }
+    let meta: { id: VerdictId; taskNum: string }
+    try {
+      meta = JSON.parse(view.private_metadata || '{}')
+    } catch {
+      await ack()
+      return
+    }
+    const reason = (view.state.values?.reason?.reason_text?.value ?? '').trim()
+    if (!reason) {
+      await ack({ response_action: 'errors', errors: { reason: 'Please add a short note so the team knows what to do.' } })
+      return
+    }
+    if (cfg.demo) {
+      await ack({ response_action: 'update', view: buildDemoNoticeModal('comment') })
+      return
+    }
+    // Ack FIRST (update in place) so the Sheet round-trips never race the 3s deadline.
+    await ack({ response_action: 'update', view: workingModal('💾 Saving your decision…') })
+    await applyVerdict(client, cfg, meta.id, meta.taskNum, reason, authorFor(body), body.user.id, body.view?.id)
   })
 
   // ── Search ────────────────────────────────────────────────────────────────
@@ -497,5 +552,162 @@ function successModal(text: string): ModalView {
     title: { type: 'plain_text', text: 'Task created' },
     close: { type: 'plain_text', text: 'Close' },
     blocks: [section(text)],
+  }
+}
+
+// ── Derek verdict helpers ───────────────────────────────────────────────────
+
+/** The required-note modal for Request-changes / Answer & release. */
+async function openVerdictReasonModal(client: any, triggerId: string, id: VerdictId, taskNum: string): Promise<void> {
+  const isChanges = id === 'request_changes'
+  const label = isChanges ? 'What should change?' : 'Your answer (what unblocks it)'
+  const placeholder = isChanges ? 'e.g. Punch up the CTA and shorten the intro.' : 'e.g. Use $20/hr — approved to proceed.'
+  const view: ModalView = {
+    type: 'modal',
+    callback_id: 'verdict_reason_submit',
+    private_metadata: JSON.stringify({ id, taskNum }),
+    title: { type: 'plain_text', text: isChanges ? 'Request changes' : 'Answer & release' },
+    submit: { type: 'plain_text', text: 'Send' },
+    close: { type: 'plain_text', text: 'Cancel' },
+    blocks: [plainInput('reason', label, 'reason_text', { multiline: true, maxLength: 900, placeholder })],
+  }
+  try {
+    await client.views.open({ trigger_id: triggerId, view })
+  } catch (err) {
+    logErr('openVerdictReasonModal', err)
+  }
+}
+
+/** The Next-action (col K) each verdict stamps — one Derek-readable sentence, or undefined to leave it. */
+function verdictNextAction(id: VerdictId, reason?: string): string | undefined {
+  switch (id) {
+    case 'approve':
+      return 'Approved by Derek — team to wrap up and close.'
+    case 'mark_done':
+      return undefined
+    case 'request_changes':
+      return clamp(`Revise per Derek: ${(reason ?? '').trim()}`, 200)
+    case 'answer_release':
+      return 'Derek answered — team to proceed (see comment).'
+    case 'reopen':
+      return 'Reopened by Derek for more work.'
+  }
+}
+
+/** Short DM to Claudio when Derek acts (best-effort; batching is a later phase). */
+function verdictDmText(id: VerdictId, ref: string, reason?: string, warning?: string): string {
+  const w = warning ? `\n⚠️ ${warning}` : ''
+  switch (id) {
+    case 'approve':
+      return `✅ Derek *approved & closed* ${ref}.${w}`
+    case 'mark_done':
+      return `✅ Derek *marked ${ref} done*.${w}`
+    case 'request_changes':
+      return `↩︎ Derek *requested changes* on ${ref}: "${reason ?? ''}"${w}`
+    case 'answer_release':
+      return `🔓 Derek *answered ${ref}* (back to the team): "${reason ?? ''}"${w}`
+    case 'reopen':
+      return `↩︎ Derek *reopened* ${ref}.${w}`
+  }
+}
+
+/** Fallback confirmation shown only if re-rendering the fresh task modal fails. */
+function verdictDoneModal(ref: string): ModalView {
+  return {
+    type: 'modal',
+    title: { type: 'plain_text', text: 'Done' },
+    close: { type: 'plain_text', text: 'Close' },
+    blocks: [section(`✅ *${ref}* updated.\nClaudio has been notified.`)],
+  }
+}
+
+/**
+ * Apply a verdict: CAS-guarded status write FIRST, then (for note verdicts) append
+ * the note as a comment, then re-render the modal to the fresh state + refresh the
+ * Home + DM Claudio. Never writes the comment if the status write failed (no orphan
+ * note). Every path is best-effort AFTER the write — a failed refresh/DM never
+ * undoes a committed status change.
+ */
+async function applyVerdict(
+  client: any,
+  cfg: Config,
+  id: VerdictId,
+  taskNum: string,
+  reason: string | undefined,
+  author: string,
+  userId: string,
+  viewId: string | undefined,
+): Promise<void> {
+  const v = VERDICTS[id]
+  let task: Task | undefined
+  try {
+    const tasks = await getTasks(cfg)
+    task = tasks.find((t) => t.taskNum === taskNum)
+  } catch (err) {
+    logErr('applyVerdict.lookup', err)
+  }
+  const ref = task ? taskRef(task) : `#${taskNum}`
+
+  const update = async (view: ModalView): Promise<void> => {
+    if (viewId) await client.views.update({ view_id: viewId, view }).catch((e: any) => logErr('applyVerdict.update', e))
+  }
+
+  let res: Awaited<ReturnType<typeof writeStatus>>
+  try {
+    res = await writeStatus(cfg, {
+      taskNum,
+      expect: v.expect,
+      rawStatus: rawStatusFor(id, reason),
+      nextAction: verdictNextAction(id, reason),
+    })
+  } catch (err) {
+    // A thrown API error mid-write must still give Derek explicit feedback (never a
+    // stuck "Saving…" modal). A retry is safe — the CAS rejects a duplicate write.
+    logErr('applyVerdict.write', err)
+    await update(buildActErrorModal(`Couldn't update ${ref} — the tracker didn't respond. Try again in a moment or ping Claudio.`))
+    return
+  }
+
+  if (!res.ok) {
+    if (res.reason === 'precondition') {
+      const cur = res.currentStatus ? STATUS_LABEL[res.currentStatus] : 'a different state'
+      await update(buildActErrorModal(`Nothing changed — ${ref} already moved to "${cur}" (someone else acted first). Close and reopen it to see where it stands.`))
+    } else if (res.reason === 'row_shift') {
+      await update(buildActErrorModal(`⚠️ Couldn't safely confirm the change on ${ref} — a row may have shifted in the Sheet. Please double-check ${ref} in the tracker before acting on it again.`))
+    } else {
+      await update(buildActErrorModal(`Couldn't update ${ref} right now (${res.reason ?? 'error'}). Try again in a moment or ping Claudio.`))
+    }
+    return
+  }
+
+  // Status committed. Bust caches so the refreshed modal + Home reflect it.
+  invalidate()
+
+  // Note verdicts: append the note as a comment AFTER the status write (never orphaned).
+  if (reason && (id === 'request_changes' || id === 'answer_release')) {
+    try {
+      await appendComment(cfg, { taskNum, author, text: reason }, undefined)
+    } catch (err) {
+      logErr('applyVerdict.comment', err)
+    }
+  }
+
+  // Re-render the modal to the fresh task (buttons update, e.g. Approve → now offers Reopen).
+  try {
+    const modal = await taskModalFor(cfg, taskNum, userId)
+    await update(modal ?? verdictDoneModal(ref))
+  } catch (err) {
+    logErr('applyVerdict.refresh', err)
+    await update(verdictDoneModal(ref))
+  }
+
+  // Refresh Derek's Home — the section relocates automatically from the new status.
+  await publishForUser(client, cfg, userId).catch(() => {})
+
+  // DM Claudio (best-effort; never rolls back the committed write).
+  try {
+    await dmClaudio(client, cfg, verdictDmText(id, ref, reason, res.warning))
+  } catch (err) {
+    logErr('applyVerdict.dm', err)
   }
 }

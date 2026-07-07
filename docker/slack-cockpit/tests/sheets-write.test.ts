@@ -6,6 +6,7 @@ import {
   createTask,
   ensureCommentsTab,
   nextTaskNum,
+  writeStatus,
   type SheetsClient,
 } from '../src/sheets-write.js'
 import type { Config } from '../src/config.js'
@@ -240,3 +241,108 @@ function buildStubRow(taskNum: string, title: string): string[] {
   row[4] = title // Task
   return row
 }
+
+// ── writeStatus (Derek's verdict write) ──────────────────────────────────────
+
+/** A data row with Task# (A/0), Title (E/4), Status (J/9), Owner-next (M/12). */
+function statusRow(taskNum: string, status: string, ownerNext = 'Derek'): string[] {
+  const row = new Array(HEADER.length).fill('')
+  row[0] = taskNum
+  row[4] = 't' + taskNum
+  row[9] = status // Status (J)
+  row[12] = ownerNext // Owner-next (M)
+  return row
+}
+
+/** Range-aware stub: full A1:Z read returns all rows; the single-cell verify read returns that cell. */
+function trackerStub(rows: string[][]): { client: SheetsClient; updates: any[] } {
+  const updates: any[] = []
+  const client: SheetsClient = {
+    spreadsheets: {
+      get: () => Promise.resolve({ data: { sheets: [{ properties: { title: 'Tracker' } }] } }),
+      batchUpdate: () => Promise.resolve({ data: {} }),
+      values: {
+        get: (p: any) => {
+          const range = String(p.range || '')
+          if (range.includes('A1:Z')) return Promise.resolve({ data: { values: rows } })
+          const m = /!([A-Z])(\d+)$/.exec(range) // single-cell verify read
+          if (m) {
+            const col = m[1].charCodeAt(0) - 65
+            const rowNum = parseInt(m[2], 10)
+            return Promise.resolve({ data: { values: [[rows[rowNum - 1]?.[col] ?? '']] } })
+          }
+          return Promise.resolve({ data: { values: rows } })
+        },
+        append: () => Promise.resolve({ data: {} }),
+        update: (p: any) => {
+          updates.push(p)
+          return Promise.resolve({ data: {} })
+        },
+      },
+    },
+  }
+  return { client, updates }
+}
+
+test('writeStatus: CAS passes → writes ONLY Status(J)/Next(K)/Updated(N), never Owner-next(M) or A–I', async () => {
+  const rows = [HEADER, statusRow('42', 'Delivered — awaiting Derek review')]
+  const { client, updates } = trackerStub(rows)
+  const res = await writeStatus(cfg(), { taskNum: '42', expect: ['delivered_awaiting'], rawStatus: 'Done', nextAction: 'closing' }, client)
+  expect(res.ok).toBe(true)
+  const ranges = updates.map((u) => u.range)
+  expect(ranges).toContain(`'Tracker'!J2`) // Status
+  expect(ranges).toContain(`'Tracker'!K2`) // Next action
+  expect(ranges).toContain(`'Tracker'!N2`) // Last updated
+  expect(ranges.some((r) => /!M\d/.test(r))).toBe(false) // NEVER Owner-next (Derek's)
+  expect(ranges.some((r) => /![A-I]\d/.test(r))).toBe(false) // NEVER A–I (Derek's)
+  const jWrite = updates.find((u) => u.range === `'Tracker'!J2`)
+  expect(jWrite.requestBody.values[0][0]).toBe('Done')
+})
+
+test('writeStatus: CAS ABORTS (writes nothing) when the live status no longer matches the precondition', async () => {
+  const rows = [HEADER, statusRow('42', 'Done')] // already moved to Done by someone else
+  const { client, updates } = trackerStub(rows)
+  const res = await writeStatus(cfg(), { taskNum: '42', expect: ['delivered_awaiting'], rawStatus: 'Done' }, client)
+  expect(res.ok).toBe(false)
+  expect(res.reason).toBe('precondition')
+  expect(res.currentStatus).toBe('done')
+  expect(updates).toHaveLength(0) // nothing written on a stale precondition
+})
+
+test('writeStatus: not_found and duplicate abort without writing', async () => {
+  const nf = trackerStub([HEADER, statusRow('99', 'In Progress')])
+  const r1 = await writeStatus(cfg(), { taskNum: '42', expect: ['needs_you'], rawStatus: 'Done' }, nf.client)
+  expect(r1.reason).toBe('not_found')
+  expect(nf.updates).toHaveLength(0)
+
+  const dup = trackerStub([HEADER, statusRow('42', 'Needs you'), statusRow('42', 'Needs you')])
+  const r2 = await writeStatus(cfg(), { taskNum: '42', expect: ['needs_you'], rawStatus: 'Done' }, dup.client)
+  expect(r2.reason).toBe('duplicate')
+  expect(dup.updates).toHaveLength(0)
+})
+
+test('writeStatus: a post-write row-shift (verify cell shows a DIFFERENT Task#) aborts as row_shift, NOT success', async () => {
+  const rows = [HEADER, statusRow('42', 'Delivered — awaiting Derek review')]
+  const updates: any[] = []
+  // Full read returns rows; the single-cell VERIFY read returns a different Task# (row moved).
+  const client: SheetsClient = {
+    spreadsheets: {
+      get: () => Promise.resolve({ data: { sheets: [{ properties: { title: 'Tracker' } }] } }),
+      batchUpdate: () => Promise.resolve({ data: {} }),
+      values: {
+        get: (p: any) =>
+          Promise.resolve({
+            data: { values: String(p.range || '').includes('A1:Z') ? rows : [['99']] },
+          }),
+        append: () => Promise.resolve({ data: {} }),
+        update: (p: any) => {
+          updates.push(p)
+          return Promise.resolve({ data: {} })
+        },
+      },
+    },
+  }
+  const res = await writeStatus(cfg(), { taskNum: '42', expect: ['delivered_awaiting'], rawStatus: 'Done' }, client)
+  expect(res.ok).toBe(false) // must SCREAM, never report a wrong-row write as success
+  expect(res.reason).toBe('row_shift')
+})

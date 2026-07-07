@@ -39,16 +39,34 @@ export const context = (text: string): Block => ({
 
 export const divider = (): Block => ({ type: 'divider' })
 
+/**
+ * A native Slack confirmation dialog for a button — the mis-tap guard on
+ * state-writing actions (a CEO on mobile must not close/approve by accident).
+ * Client-side: Slack shows it and only fires the action if the user confirms.
+ */
+export const confirmDialog = (
+  title: string,
+  text: string,
+  ok: string,
+  deny = 'Cancel',
+): Block => ({
+  title: { type: 'plain_text', text: title },
+  text: { type: 'mrkdwn', text },
+  confirm: { type: 'plain_text', text: ok },
+  deny: { type: 'plain_text', text: deny },
+})
+
 export const button = (
   text: string,
   action_id: string,
-  opts: { primary?: boolean; url?: string } = {},
+  opts: { primary?: boolean; url?: string; confirm?: Block } = {},
 ): Block => ({
   type: 'button',
   text: { type: 'plain_text', text, emoji: true },
   action_id,
   ...(opts.primary ? { style: 'primary' } : {}),
   ...(opts.url ? { url: opts.url } : {}),
+  ...(opts.confirm ? { confirm: opts.confirm } : {}),
 })
 
 export const actions = (elements: Block[]): Block => ({ type: 'actions', elements })

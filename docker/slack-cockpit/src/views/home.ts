@@ -237,7 +237,10 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
   const decisions = tasks.filter((t) => DECISION_STATUSES.includes(t.status))
   const byActor = new Map<Actor, Task[]>()
   for (const t of decisions) {
-    const actor = normalizeActor(t.ownerNext)
+    // A change-request is by definition the TEAM's move (rework), regardless of
+    // the Owner-next column (which the cockpit can't rewrite) — otherwise a task
+    // Derek just bounced back would re-render parked under "🔴 Needs Derek".
+    const actor = t.status === 'changes_requested' ? 'team' : normalizeActor(t.ownerNext)
     byActor.set(actor, [...(byActor.get(actor) ?? []), t])
   }
   blocks.push(divider())

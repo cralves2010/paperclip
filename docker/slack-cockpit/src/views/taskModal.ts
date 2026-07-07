@@ -1,7 +1,8 @@
-import { actions, button, context, divider, section, sectionFields, type Block, type ModalView } from '../blocks.js'
+import { actions, button, confirmDialog, context, divider, section, sectionFields, type Block, type ModalView } from '../blocks.js'
 import { STATUS_EMOJI, STATUS_LABEL, isDeliveredWithoutLink, type Comment, type Task } from '../model.js'
 import { normalizeActor } from '../normalize.js'
 import { clamp, taskRef, truncateTitle } from '../text.js'
+import { verdictsFor } from '../verdicts.js'
 import { deriveAsk, STATUS_EXPLAINER, type ViewerActor } from './didactic.js'
 
 function commentDate(ts: string): string {
@@ -39,6 +40,25 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
     // (4) Where it stands — status + its plain-English gloss.
     section(`*Where it stands*\n${STATUS_EMOJI[task.status]} ${STATUS_LABEL[task.status]} — ${STATUS_EXPLAINER[task.status]}`),
   ]
+
+  // (4b) Your decision — Derek's verdict buttons, rendered ONLY for Derek and
+  // (for the forward verdicts) only when it's his move. Direct-write verdicts
+  // carry a native confirm (mis-tap guard); Request-changes / Answer open a
+  // required-reason modal instead. Every write is CAS-guarded + reversible.
+  const verdicts = verdictsFor(task, viewer === 'derek', move === 'derek')
+  if (verdicts.length > 0) {
+    blocks.push(
+      context('*✅ Your decision*'),
+      actions(
+        verdicts.map((v) =>
+          button(v.label, `verdict:${v.id}:${task.taskNum}`, {
+            primary: v.primary,
+            confirm: v.confirm ? confirmDialog(v.confirm.title, v.confirm.text, v.confirm.ok) : undefined,
+          }),
+        ),
+      ),
+    )
+  }
 
   // (5) What this is — the team's own description, verbatim in a blockquote.
   if (task.description) {

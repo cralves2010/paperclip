@@ -58,22 +58,25 @@ export interface Task {
   lastUpdatedTs?: number
 }
 
-/** Statuses that ASSERT a deliverable exists, so a missing access link is a defect (not a normal pending state). */
-export const DELIVERED_STATUSES: CanonicalStatus[] = ['delivered_awaiting', 'done']
-
 /** True when the task carries any openable deliverable link (Drive / Slack / other). */
 export function hasDeliverableLink(t: Task): boolean {
   return Boolean(t.deliverableDriveUrl || t.deliverableSlackUrl || t.deliverableOtherUrl)
 }
 
 /**
- * The defect Claudio flagged 2026-07-05: a task marked delivered/done but with NO
- * access link — the cockpit must never present "delivered" without surfacing that
- * Derek has nothing to open. Callers render a loud ⚠️ warning instead of the
- * neutral "no deliverable linked yet" note. Rule: a real delivery ⟺ an accessible link.
+ * The defect Claudio flagged 2026-07-05: a task marked *delivered-awaiting* but
+ * with NO access link — the cockpit must never present a delivery without
+ * surfacing that Derek has nothing to open. Callers render a loud ⚠️ warning.
+ * Rule: a real delivery ⟺ an accessible link.
+ *
+ * Gated to `delivered_awaiting` ONLY (not `done`): once Derek closes a
+ * decision-type task (needs_you → Done via the cockpit Mark-done), it legitimately
+ * has no deliverable link, and must NOT self-accuse into the "⚠️ link missing"
+ * section. A delivery that reaches Done always went through Approve, which
+ * requires a link — so a linkless Done is a decision-close, not a broken delivery.
  */
 export function isDeliveredWithoutLink(t: Task): boolean {
-  return DELIVERED_STATUSES.includes(t.status) && !hasDeliverableLink(t)
+  return t.status === 'delivered_awaiting' && !hasDeliverableLink(t)
 }
 
 /** A comment on a task, stored in the Sheet's "Comments" tab (A–E schema). */

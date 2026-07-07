@@ -102,16 +102,17 @@ test('home: delivered_awaiting WITH a link surfaces under "📬 Ready for review
   expect(json.slice(json.indexOf('Needs Derek'))).not.toContain('JRS-42')
 })
 
-test('home: delivered/done WITHOUT a link surfaces under "⚠️ Delivered — link missing"', () => {
+test('home: delivered_awaiting WITHOUT a link surfaces under "⚠️ Delivered — link missing"; a linkless Done does NOT (decision-close)', () => {
   const tasks = [
     t({ taskNum: '5', company: 'JRS', status: 'delivered_awaiting', title: 'no link yet', ownerNext: 'Claudio' }),
-    t({ taskNum: '9', company: 'BAM', status: 'done', title: 'done no link' }),
+    t({ taskNum: '9', company: 'BAM', status: 'done', title: 'done no link' }), // linkless Done = a decision-close, not a defect
   ]
   const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
   expect(json).toContain('Delivered — link missing')
   expect(json).toContain('no link')
   expect(json).toContain('JRS-5')
-  expect(json).toContain('BAM-9')
+  // the linkless Done is NOT flagged as a missing-link defect (it went to 🎉 shipped)
+  expect(json.slice(json.indexOf('Delivered — link missing'))).not.toContain('BAM-9')
 })
 
 test('home: "🎉 Recently shipped" counts done even when every lastUpdatedTs is undefined', () => {
@@ -239,8 +240,10 @@ test('task modal: a delivered/done task with NO link shows a LOUD missing-link w
   expect(delivered).toMatch(/no access link/i)
   expect(delivered).not.toContain('No deliverable linked yet')
 
+  // A linkless DONE is a decision-close, not a broken delivery → neutral note, no alarm.
   const done = JSON.stringify(buildTaskModal(t({ status: 'done', deliverableDriveUrl: undefined })))
-  expect(done).toMatch(/no access link/i)
+  expect(done).not.toMatch(/no access link/i)
+  expect(done).toContain('No deliverable linked yet')
 
   // A non-delivered task with no link keeps the neutral note (no false alarm).
   const queued = JSON.stringify(buildTaskModal(t({ status: 'queued', deliverableDriveUrl: undefined })))
@@ -251,4 +254,26 @@ test('task modal: a delivered/done task with NO link shows a LOUD missing-link w
   const linked = JSON.stringify(buildTaskModal(t({ status: 'done', deliverableDriveUrl: 'https://docs.google.com/x' })))
   expect(linked).toContain('url_drive')
   expect(linked).not.toMatch(/no access link/i)
+})
+
+test('task modal: Derek gets verdict buttons (with a confirm) on his delivered task; observer/Claudio do NOT', () => {
+  const task = t({ taskNum: '42', company: 'JRS', status: 'delivered_awaiting', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/1' })
+  const derek = JSON.stringify(buildTaskModal(task, [], 'derek'))
+  expect(derek).toContain('Your decision')
+  expect(derek).toContain('verdict:approve:42')
+  expect(derek).toContain('verdict:request_changes:42')
+  expect(derek).toContain('"confirm"') // Approve carries a native mis-tap confirm
+  // A shared modal never shows a live verdict to Claudio/observers.
+  const observer = JSON.stringify(buildTaskModal(task, [], 'observer'))
+  expect(observer).not.toContain('Your decision')
+  expect(observer).not.toContain('verdict:')
+})
+
+test('home: a changes_requested task buckets to "Needs the team", never "Needs Derek", even with Owner-next = Derek', () => {
+  const tasks = [t({ taskNum: '7', company: 'JRS', status: 'changes_requested', ownerNext: 'Derek' })]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(json).toContain('Needs the team')
+  const teamIdx = json.indexOf('Needs the team')
+  expect(json.slice(teamIdx)).toContain('JRS-7') // under the team group
+  expect(json.slice(json.indexOf('Needs Derek'), teamIdx)).not.toContain('JRS-7') // NOT in Derek's queue
 })
