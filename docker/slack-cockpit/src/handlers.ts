@@ -616,20 +616,20 @@ function verdictNextAction(id: VerdictId, reason?: string): string | undefined {
   }
 }
 
-/** Short DM to Claudio when Derek acts (best-effort; batching is a later phase). */
-function verdictDmText(id: VerdictId, ref: string, reason?: string, warning?: string): string {
+/** Short DM to Claudio when a principal acts (best-effort; batching is a later phase). */
+function verdictDmText(id: VerdictId, ref: string, actor: string, reason?: string, warning?: string): string {
   const w = warning ? `\n⚠️ ${warning}` : ''
   switch (id) {
     case 'approve':
-      return `✅ Derek *approved & closed* ${ref}.${w}`
+      return `✅ ${actor} *approved & closed* ${ref}.${w}`
     case 'mark_done':
-      return `✅ Derek *marked ${ref} done*.${w}`
+      return `✅ ${actor} *marked ${ref} done*.${w}`
     case 'request_changes':
-      return `↩︎ Derek *requested changes* on ${ref}: "${reason ?? ''}"${w}`
+      return `↩︎ ${actor} *requested changes* on ${ref}: "${reason ?? ''}"${w}`
     case 'answer_release':
-      return `🔓 Derek *answered ${ref}* (back to the team): "${reason ?? ''}"${w}`
+      return `🔓 ${actor} *answered ${ref}* (back to the team): "${reason ?? ''}"${w}`
     case 'reopen':
-      return `↩︎ Derek *reopened* ${ref}.${w}`
+      return `↩︎ ${actor} *reopened* ${ref}.${w}`
   }
 }
 
@@ -728,7 +728,8 @@ async function applyVerdict(
 
   // DM Claudio (best-effort; never rolls back the committed write).
   try {
-    await dmClaudio(client, cfg, verdictDmText(id, ref, reason, res.warning))
+    const actorName = userId === DEREK_USER_ID ? 'Derek' : userId === cfg.notifyUserId ? 'Claudio' : 'Someone'
+    await dmClaudio(client, cfg, verdictDmText(id, ref, actorName, reason, res.warning))
   } catch (err) {
     logErr('applyVerdict.dm', err)
   }
