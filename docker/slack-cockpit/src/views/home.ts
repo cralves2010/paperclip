@@ -18,7 +18,8 @@ import {
   type ViewState,
 } from '../model.js'
 import { companyHealth, normalizeActor, rollupCounts, type Actor } from '../normalize.js'
-import { clamp, coarseAge, countLine, liveProvenance, taskRef } from '../text.js'
+import { clamp, coarseAge, countLine, formatSyncClock, liveProvenance, taskRef } from '../text.js'
+import type { Delta } from '../cockpit-state.js'
 
 // App Home hard-caps at ~100 blocks. Worst case with this 6-section layout ≈ 86
 // (14-block margin — asserted in tests/views.test.ts). Top to bottom: chrome →
@@ -70,6 +71,40 @@ export interface HomeOpts {
   /** Injectable clock for tests; defaults to Date.now(). */
   now?: number
   commentCounts?: Map<string, number>
+  /** Deltas since the viewer's last visit — drives the 🔔 "since you were here" digest. */
+  deltas?: Delta[]
+  /** Epoch ms of the viewer's PREVIOUS visit — drives the personal "since your last visit" line. */
+  lastSeenTs?: number
+}
+
+const DELTA_LABEL: Record<Delta['kind'], string> = {
+  into_review: 'ready for your review',
+  shipped: 'shipped',
+  into_needs: 'needs you',
+  changes: 'changes requested',
+  linked: 'got its deliverable link',
+  new_task: 'new task',
+  new_comment: 'new comment',
+  updated: 'updated',
+}
+
+/** One compressed line summarizing the deltas by category, e.g. "2 ready for review · 1 shipped · 2 new comments". */
+function summarizeDeltas(deltas: Delta[]): string {
+  const buckets: [Delta['kind'][], string, string][] = [
+    [['into_review', 'linked'], '📬', 'ready for review'],
+    [['shipped'], '🎉', 'shipped'],
+    [['into_needs'], '🟠', 'need you'],
+    [['changes'], '🟣', 'changes requested'],
+    [['new_comment'], '💬', 'new comment'],
+    [['new_task'], '➕', 'new task'],
+    [['updated'], '•', 'updated'],
+  ]
+  const parts: string[] = []
+  for (const [kinds, emoji, noun] of buckets) {
+    const n = deltas.filter((d) => kinds.includes(d.kind)).length
+    if (n > 0) parts.push(`${emoji} ${n} ${noun}${n === 1 ? '' : 's'}`)
+  }
+  return parts.join(' · ')
 }
 
 // ── sort / format helpers ───────────────────────────────────────────────────
@@ -169,9 +204,22 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     ? '🧪 *DEMO FIXTURE* · sample JRS+Brightly data (not live)'
     : liveProvenance(opts.syncedAtMs, opts.now)
 
-  const blocks: Block[] = [
-    header('Agent M42 · Portfolio Cockpit'),
-    context(provenance),
+  const deltas = opts.deltas ?? []
+  const blocks: Block[] = [header('Agent M42 · Portfolio Cockpit'), context(provenance)]
+
+  // Personal "since your last visit" line — App Home cannot push, so this shows the
+  // moment the viewer next opens. Per-user (each principal gets their own diff).
+  if (opts.lastSeenTs != null) {
+    blocks.push(
+      context(
+        deltas.length > 0
+          ? `🔔 *Since your last visit* (${formatSyncClock(opts.lastSeenTs)}) · ${deltas.length} ${deltas.length === 1 ? 'thing' : 'things'} moved`
+          : `✓ *All caught up* since your last visit (${formatSyncClock(opts.lastSeenTs)})`,
+      ),
+    )
+  }
+
+  blocks.push(
     actions([
       button('🔄 Refresh', 'refresh_home'),
       button('📋 All tasks', 'open_board'),
@@ -179,7 +227,21 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
       button('➕ New task', 'open_create_task'),
     ]),
     divider(),
-  ]
+  )
+
+  // 🔔 "Since you were here" digest — a one-line summary + up to 2 highest-signal
+  // rows that now need the viewer. Rendered ONLY when there are deltas; its ABSENCE
+  // is the all-clear (house style). The rows are surfaced where they matter, not a
+  // second copy of the board.
+  if (deltas.length > 0) {
+    blocks.push(header('🔔 Since you were here'), context(summarizeDeltas(deltas)))
+    for (const d of deltas.filter((x) => x.needsYou).slice(0, 2)) {
+      blocks.push(
+        section(`*${clamp(d.title, 200)}*\n\`${d.company}-${d.taskNum}\` · 🆕 ${DELTA_LABEL[d.kind]}`, button('Open', `open_task:${d.taskNum}`, { primary: true })),
+      )
+    }
+    blocks.push(divider())
+  }
 
   // ── 📬 Ready for review — finished deliverables Derek can open right now.
   // Derek's own items float first, then most-recent. Hidden entirely when empty

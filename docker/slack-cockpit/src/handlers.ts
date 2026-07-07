@@ -2,6 +2,7 @@ import type { App } from '@slack/bolt'
 import type { Config } from './config.js'
 import { buildPrivateView, isAllowed } from './allowlist.js'
 import { getComments, getState, getTasks, invalidate, lastSyncAt, setState } from './state.js'
+import { buildSnapshot, diffSnapshot, readWatermark, writeWatermark, type Delta } from './cockpit-state.js'
 import { commentCountByTask } from './sheets.js'
 import { appendComment, createTask, writeStatus } from './sheets-write.js'
 import { dmClaudio, createDmText } from './notify.js'
@@ -44,7 +45,7 @@ function authorFor(body: any): string {
   return attributeAuthor(body?.user?.id ?? '', body?.user?.username || body?.user?.name || undefined)
 }
 
-async function publishForUser(client: any, cfg: Config, userId: string): Promise<void> {
+async function publishForUser(client: any, cfg: Config, userId: string, trackVisit = false): Promise<void> {
   if (!isAllowed(userId, cfg.allowlist)) {
     await client.views.publish({ user_id: userId, view: buildPrivateView() })
     return
@@ -54,15 +55,33 @@ async function publishForUser(client: any, cfg: Config, userId: string): Promise
     const commentCounts = commentCountByTask(comments)
     const state = getState(userId)
     const syncedAtMs = lastSyncAt() ?? undefined
-    let view
     if (state.kind === 'board') {
-      view = buildBoardView(tasks, state, { demo: cfg.demo, commentCounts, allTasks: tasks, syncedAtMs })
-    } else if (state.kind === 'search') {
-      view = buildSearchResults(searchTasks(tasks, state.query), state.query, state.page, { commentCounts })
-    } else {
-      view = buildHomeView(tasks, state, { demo: cfg.demo, commentCounts, syncedAtMs })
+      await client.views.publish({ user_id: userId, view: buildBoardView(tasks, state, { demo: cfg.demo, commentCounts, allTasks: tasks, syncedAtMs }) })
+      return
     }
-    await client.views.publish({ user_id: userId, view })
+    if (state.kind === 'search') {
+      await client.views.publish({ user_id: userId, view: buildSearchResults(searchTasks(tasks, state.query), state.query, state.page, { commentCounts }) })
+      return
+    }
+    // Home view. On a genuine visit (app_home_opened / Refresh), diff the board
+    // against the viewer's DURABLE watermark to drive the "🔔 since you were here"
+    // digest, then advance the watermark fire-and-forget (never blocks the render).
+    let deltas: Delta[] | undefined
+    let lastSeenTs: number | undefined
+    if (trackVisit && !cfg.demo) {
+      try {
+        const wm = await readWatermark(cfg, userId)
+        deltas = diffSnapshot(tasks, commentCounts, wm?.snapshot ?? {})
+        lastSeenTs = wm?.lastSeenTs || undefined
+      } catch (e) {
+        logErr('watermark.read', e) // safe-degrade: just no digest this render
+      }
+    }
+    await client.views.publish({ user_id: userId, view: buildHomeView(tasks, state, { demo: cfg.demo, commentCounts, syncedAtMs, deltas, lastSeenTs }) })
+    if (trackVisit && !cfg.demo) {
+      const now = Date.now()
+      writeWatermark(cfg, { userId, lastSeenTs: now, sessionAnchorTs: now, snapshot: buildSnapshot(tasks, commentCounts) }).catch((e) => logErr('watermark.write', e))
+    }
   } catch (err) {
     // Never leave the Home a silent blank: publish a visible error state.
     logErr('publishForUser', err)
@@ -86,13 +105,13 @@ export function registerHandlers(app: App, cfg: Config): void {
   // ── Navigation ────────────────────────────────────────────────────────────
 
   app.event('app_home_opened', async ({ event, client }: any) => {
-    await publishForUser(client, cfg, event.user)
+    await publishForUser(client, cfg, event.user, true) // a genuine visit → track it for the digest
   })
 
   app.action('refresh_home', async ({ ack, body, client }: any) => {
     await ack()
     invalidate()
-    await publishForUser(client, cfg, body.user.id)
+    await publishForUser(client, cfg, body.user.id, true)
   })
 
   app.action('open_board', async ({ ack, body, client }: any) => {

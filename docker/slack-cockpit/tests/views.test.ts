@@ -278,3 +278,30 @@ test('home: a changes_requested task buckets to "Needs the team", never "Needs D
   expect(json.slice(teamIdx)).toContain('JRS-7') // under the team group
   expect(json.slice(json.indexOf('Needs Derek'), teamIdx)).not.toContain('JRS-7') // NOT in Derek's queue
 })
+
+test('home: the 🔔 "since you were here" digest renders from deltas; the all-clear shows when caught up; first visit shows neither', () => {
+  const tasks = [t({ taskNum: '43', company: 'JRS', status: 'delivered_awaiting', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/1' })]
+  const deltas = [{ taskNum: '43', company: 'JRS', title: 'ready doc', kind: 'into_review' as const, needsYou: true }]
+  const withD = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }, { deltas, lastSeenTs: 1_700_000_000_000, now: 1_700_000_100_000 }))
+  expect(withD).toContain('Since you were here')
+  expect(withD).toContain('Since your last visit')
+  expect(withD).toContain('JRS-43')
+  expect(withD).toContain('🆕')
+
+  const clear = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }, { deltas: [], lastSeenTs: 1_700_000_000_000, now: 1_700_000_100_000 }))
+  expect(clear).toContain('All caught up')
+  expect(clear).not.toContain('Since you were here')
+
+  const first = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' })) // no watermark
+  expect(first).not.toContain('last visit')
+  expect(first).not.toContain('Since you were here')
+})
+
+test('home: the digest on top of a full board still fits under 100 blocks', () => {
+  const tasks: Task[] = []
+  for (let i = 0; i < 30; i++) tasks.push(t({ taskNum: `co${i}`, company: `Co${i}`, status: 'in_progress' }))
+  for (let i = 0; i < 6; i++) tasks.push(t({ taskNum: `d${i}`, company: 'JRS', status: 'needs_you', ownerNext: 'Derek' }))
+  const deltas = Array.from({ length: 8 }, (_, i) => ({ taskNum: `d${i}`, company: 'JRS', title: 'x', kind: 'into_needs' as const, needsYou: true }))
+  const view = buildHomeView(tasks, { kind: 'portfolio' }, { deltas, lastSeenTs: 1, now: 2 })
+  expect(view.blocks.length).toBeLessThan(100)
+})
