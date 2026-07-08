@@ -181,11 +181,14 @@ export async function ensureCommentsTab(cfg: Config, client: SheetsClient = real
  */
 export async function appendComment(
   cfg: Config,
-  input: { taskNum: string; author: string; text: string },
+  input: { taskNum: string; author: string; text: string; seen?: string },
   client: SheetsClient = realClient(cfg),
 ): Promise<void> {
   await ensureCommentsTab(cfg, client)
-  const row = [new Date().toISOString(), input.taskNum, input.author, input.text, '']
+  // Col E ("Seen") is the comment-sweep watermark. Normally empty (an un-processed
+  // comment); a verdict note pre-stamps it terminal so the sweep never re-surfaces
+  // an intent the cockpit already actioned.
+  const row = [new Date().toISOString(), input.taskNum, input.author, input.text, input.seen ?? '']
   await withRetry(() =>
     client.spreadsheets.values.append({
       spreadsheetId: cfg.sheetId,

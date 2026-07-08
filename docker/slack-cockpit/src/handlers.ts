@@ -734,9 +734,11 @@ async function applyVerdict(
   invalidate()
 
   // Note verdicts: append the note as a comment AFTER the status write (never orphaned).
+  // Pre-stamp its "Seen" watermark terminal so the comment-sweep never re-surfaces an
+  // intent the cockpit verdict already actioned (D-D).
   if (reason && (id === 'request_changes' || id === 'answer_release')) {
     try {
-      await appendComment(cfg, { taskNum, author, text: reason }, undefined)
+      await appendComment(cfg, { taskNum, author, text: reason, seen: `Handled — cockpit verdict (${new Date().toISOString().slice(0, 10)})` }, undefined)
     } catch (err) {
       logErr('applyVerdict.comment', err)
     }
