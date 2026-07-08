@@ -11,6 +11,11 @@
 //   node tracker.mjs comments <task#>                      read-only: list Comments-tab entries for a task
 //   node tracker.mjs comment-sweep [--all] [--json]        read-only: unprocessed comments (Derek by default)
 //        [--include-seen] [--task <N>]                     joined to their parent task, for /m42-comment-sweep
+//   node tracker.mjs create --claudio (--from-comment '#<t>@<ISO>' | --standalone)
+//        --business "<b>" --title "<t>" [--priority "<p>"] [--next "<sentence>"]   mint a new task (dup Task# = hard stop)
+//   node tracker.mjs comment-add <task#> --text "<t>" [--author "<machine>"]       machine back-link (self-stamps Seen)
+//   node tracker.mjs mark-seen --key '#<t>@<ISO>' --state '<token>' [--force]      stamp a comment's Seen watermark
+//   node tracker.mjs sweep-lock acquire|release [--window cc-<slug>]               serialize concurrent sweeps
 //   node tracker.mjs claim <task#> --window cc-<slug> [--force]
 //   node tracker.mjs heartbeat <task#> --window cc-<slug>
 //   node tracker.mjs release <task#> --window cc-<slug> --status "<status>"
@@ -178,11 +183,11 @@ function claimAge(tsStr) {
 const { cmd, pos, flags } = parseArgs(process.argv.slice(2))
 
 if (!cmd || flags.help) {
-  console.log('usage: tracker.mjs init|claims|row|comments|comment-sweep|claim|heartbeat|release|done|link  (see file header)')
+  console.log('usage: tracker.mjs init|claims|row|comments|comment-sweep|create|comment-add|mark-seen|sweep-lock|claim|heartbeat|release|done|link  (see file header)')
   process.exit(0)
 }
 
-const needsWrite = ['init', 'claim', 'heartbeat', 'release', 'done', 'link'].includes(cmd)
+const needsWrite = ['init', 'claim', 'heartbeat', 'release', 'done', 'link', 'create', 'mark-seen', 'comment-add', 'sweep-lock'].includes(cmd)
 const sheets = await sheetsClient(needsWrite)
 const data = await load(sheets)
 
@@ -344,6 +349,182 @@ if (cmd === 'comment-sweep') {
     buckets.terminal.forEach(printItem)
   }
   console.log(`\nSurfaced ${buckets.unprocessed.length + buckets.deferred.length + buckets.held.length} to act on (of ${items.length} matched).`)
+  process.exit(0)
+}
+
+if (cmd === 'sweep-lock') {
+  // Serialize concurrent sweeps via a lock row in the hidden _CockpitState tab
+  // (inert to the cockpit: its userId lookup never matches 'comment-sweep-lock').
+  // A lock older than 15 min is stale and auto-reclaimable.
+  const STATE_TAB = '_CockpitState'
+  const LOCK_KEY = 'comment-sweep-lock'
+  const action = pos[0]
+  const win = flags.window || 'cc-unknown'
+  if (action !== 'acquire' && action !== 'release') die('sweep-lock needs "acquire" or "release"')
+  let rows
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A1:C` })
+    rows = res.data.values ?? []
+  } catch (err) {
+    if (/unable to parse range/i.test(String(err?.message ?? err))) die(`${STATE_TAB} tab missing — open the cockpit once to create it`)
+    throw err
+  }
+  let lockRow = -1
+  for (let i = 1; i < rows.length; i++) if (((rows[i][0] ?? '') + '').trim() === LOCK_KEY) { lockRow = i; break }
+  if (action === 'acquire') {
+    if (lockRow >= 0) {
+      const heldIso = ((rows[lockRow][1] ?? '') + '').trim()
+      const heldWin = ((rows[lockRow][2] ?? '') + '').trim()
+      const ageMin = heldIso ? (Date.now() - Date.parse(heldIso)) / 60000 : 999
+      if (heldIso && ageMin < 15 && heldWin !== win)
+        die(`sweep already running in window "${heldWin}" (${ageMin.toFixed(1)}m ago) — wait, or run from that window`)
+    }
+    const target = lockRow >= 0 ? lockRow : rows.length
+    await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${target + 1}:C${target + 1}`, valueInputOption: 'RAW', requestBody: { values: [[LOCK_KEY, nowIso(), win]] } })
+    audit({ cmd: 'sweep-lock', action, window: win })
+    console.log(`✓ sweep lock acquired (${win})`)
+  } else {
+    if (lockRow >= 0)
+      await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${lockRow + 1}:C${lockRow + 1}`, valueInputOption: 'RAW', requestBody: { values: [['', '', '']] } })
+    audit({ cmd: 'sweep-lock', action, window: win })
+    console.log('✓ sweep lock released')
+  }
+  process.exit(0)
+}
+
+if (cmd === 'mark-seen') {
+  // Stamp a comment's "Seen" (col E) with a processed-state token. State machine:
+  // terminal (Processed/Skipped/Handled) is protected — needs --force to overwrite
+  // (same-token = safe no-op); non-terminal (Deferred/Awaiting Derek) advances freely.
+  const key = typeof flags.key === 'string' ? flags.key : null
+  const state = typeof flags.state === 'string' ? flags.state : null
+  const force = flags.force === true
+  if (!key) die(`mark-seen needs --key '#<task>@<ISO>'`)
+  if (!state) die(`mark-seen needs --state '<token>'`)
+  const m = key.match(/^#([^@]+)@(.+)$/)
+  if (!m) die(`bad --key (expected '#<task>@<ISO>'): ${key}`)
+  const kTask = m[1].trim()
+  const kTs = m[2].trim()
+  let cRows
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'Comments'!A1:F` })
+    cRows = res.data.values ?? []
+  } catch (err) {
+    if (/unable to parse range/i.test(String(err?.message ?? err))) die('no Comments tab')
+    throw err
+  }
+  const ch = (cRows[0] ?? []).map((h) => (h ?? '').trim())
+  const cn = (s) => s.replace(/\s+/g, '').toLowerCase()
+  const ci = (...names) => { for (const n of names) { const i = ch.findIndex((h) => cn(h) === cn(n)); if (i >= 0) return i } return -1 }
+  const iTs = ci('Timestamp', 'Time'), iTask = ci('Task #', 'Task#', 'Task'), iSeen = ci('Seen')
+  if (iSeen < 0) die('Comments tab has no "Seen" column')
+  const hits = []
+  for (let i = 1; i < cRows.length; i++) if (((cRows[i][iTask] ?? '') + '').trim() === kTask && ((cRows[i][iTs] ?? '') + '').trim() === kTs) hits.push(i)
+  if (hits.length === 0) die(`comment not found for key ${key}`)
+  if (hits.length > 1) die(`ambiguous key ${key} (${hits.length} rows) — escalate to Claudio`)
+  const rowIdx = hits[0]
+  const cur = ((cRows[rowIdx][iSeen] ?? '') + '').trim()
+  const isTerminal = (s) => /^(processed|skipped|handled)\b/i.test(s)
+  if (isTerminal(cur)) {
+    if (cur === state) { console.log(`✓ no-op (already "${cur}")`); process.exit(0) }
+    if (!force) die(`refusing to overwrite terminal state "${cur}" without --force`)
+  }
+  const col = colLetter(iSeen)
+  await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'Comments'!${col}${rowIdx + 1}`, valueInputOption: 'RAW', requestBody: { values: [[state]] } })
+  // row-shift verify: re-read from Timestamp col to Seen col of that row.
+  const chk = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'Comments'!${colLetter(iTs)}${rowIdx + 1}:${col}${rowIdx + 1}` })
+  const back = chk.data.values?.[0] ?? []
+  if (((back[0] ?? '') + '').trim() !== kTs || ((back[back.length - 1] ?? '') + '').trim() !== state)
+    die(`ROW SHIFT / verify failed for ${key} — check the Comments tab manually`)
+  audit({ cmd: 'mark-seen', key, state, prev: cur })
+  console.log(`✓ marked ${key} → "${state}"${cur ? ` (was "${cur}")` : ''}`)
+  process.exit(0)
+}
+
+if (cmd === 'comment-add') {
+  // Append a MACHINE back-link comment, self-stamping its own col E terminal so it
+  // never re-enters the sweep. Author must be a machine identity, never Derek/Claudio.
+  const taskN = pos[0]
+  if (!taskN) die('comment-add needs a <task#>')
+  const author = typeof flags.author === 'string' ? flags.author : 'Agent M42 (cc-sweep)'
+  const text = typeof flags.text === 'string' ? flags.text : null
+  if (!text) die(`comment-add needs --text "<t>"`)
+  const seenStamp = `Skipped — machine back-link (${today()})`
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SHEET_ID,
+    range: `'Comments'!A1:E1`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [[nowIso(), String(taskN), author, text, seenStamp]] },
+  })
+  audit({ cmd: 'comment-add', taskNum: taskN, author })
+  console.log(`✓ back-link comment added to #${taskN} (self-stamped "${seenStamp}")`)
+  process.exit(0)
+}
+
+if (cmd === 'create') {
+  // Mint a NEW task row. Claudio-only. Requires --from-comment (provenance anchor,
+  // enables crash-safe idempotency) unless --standalone. Post-append duplicate-Task#
+  // scan is a HARD STOP. Owner=Agent M42, Status=Not Started (unclaimed).
+  if (flags.claudio !== true) die('create requires --claudio (Claudio-only, per contract)')
+  const fromComment = typeof flags['from-comment'] === 'string' ? flags['from-comment'] : null
+  const standalone = flags.standalone === true
+  if (!fromComment && !standalone) die(`create requires --from-comment '#<task>@<ISO>' (or --standalone for a genuine standalone task)`)
+  const business = typeof flags.business === 'string' ? flags.business : null
+  const title = typeof flags.title === 'string' ? flags.title : null
+  if (!business) die('create needs --business "<b>"')
+  if (!title) die('create needs --title "<t>"')
+  const priority = typeof flags.priority === 'string' ? flags.priority : ''
+  const nextSentence = typeof flags.next === 'string' ? flags.next.trim() : ''
+  if (nextSentence.length > 200) die('--next too long (≤200 chars)')
+  if (nextSentence && /[\\/]|cc-|\.mjs|--/.test(nextSentence)) die('--next must be a plain Derek-readable sentence (no paths/slugs/flags)')
+
+  const norm = (s) => (s ?? '').replace(/\s+/g, '').toLowerCase()
+  const idxOf = (...names) => { for (const n of names) { const i = data.headers.findIndex((h) => norm(h) === norm(n)); if (i >= 0) return i } return -1 }
+  const ownerCol = idxOf('Owner')
+  const priorityCol = idxOf('Priority Tier', 'Priority')
+
+  // Idempotency: if this comment already spawned a task, no-op.
+  const anchor = fromComment ? `[from comment ${fromComment}]` : ''
+  if (anchor && data.cols.next >= 0) {
+    for (let r = 1; r < data.rows.length; r++) {
+      if (((data.rows[r][data.cols.next] ?? '') + '').includes(anchor)) {
+        console.log(`already created as #${((data.rows[r][data.cols.task] ?? '') + '').trim()} (anchor found) — no-op`)
+        process.exit(0)
+      }
+    }
+  }
+
+  let maxNum = 0
+  for (let r = 1; r < data.rows.length; r++) {
+    const n = parseInt(((data.rows[r][data.cols.task] ?? '') + '').replace(/[^\d]/g, ''), 10)
+    if (!Number.isNaN(n) && n > maxNum) maxNum = n
+  }
+  const nextNum = maxNum + 1
+  const nextAction = [nextSentence, anchor].filter(Boolean).join(' ').trim()
+
+  const row = new Array(data.headers.length).fill('')
+  row[data.cols.task] = String(nextNum)
+  if (data.cols.business >= 0) row[data.cols.business] = business
+  row[data.cols.title] = title
+  if (ownerCol >= 0) row[ownerCol] = 'Agent M42'
+  if (priorityCol >= 0 && priority) row[priorityCol] = priority
+  if (data.cols.status >= 0) row[data.cols.status] = 'Not Started'
+  if (data.cols.next >= 0 && nextAction) row[data.cols.next] = nextAction
+  if (data.cols.updated >= 0) row[data.cols.updated] = today()
+
+  await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${TAB}!A1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [row] } })
+
+  // HARD STOP on duplicate Task# (concurrent mint).
+  const verify = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `${TAB}!A1:Z` })
+  const vRows = verify.data.values ?? []
+  const vHeaders = (vRows[0] ?? []).map((h) => (h ?? '').trim())
+  const vTaskCol = vHeaders.findIndex((h) => norm(h) === norm('Task #') || norm(h) === norm('Task#'))
+  const dupes = vRows.slice(1).filter((rr) => ((rr[vTaskCol] ?? '') + '').trim() === String(nextNum))
+  if (dupes.length !== 1) die(`HARD STOP: Task #${nextNum} appears ${dupes.length}× after append — DE-DUP manually before continuing`)
+  audit({ cmd: 'create', taskNum: nextNum, business, provenance: fromComment || 'standalone' })
+  console.log(`✓ created ${business}-${nextNum} — Not Started (Owner: Agent M42)`)
+  if (fromComment) console.log(`  anchored: ${anchor}`)
   process.exit(0)
 }
 
