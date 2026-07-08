@@ -9,6 +9,8 @@
 //   node tracker.mjs claims                                list active claims (+stale flags)
 //   node tracker.mjs row <task#>                           show one row
 //   node tracker.mjs comments <task#>                      read-only: list Comments-tab entries for a task
+//   node tracker.mjs comment-sweep [--all] [--json]        read-only: unprocessed comments (Derek by default)
+//        [--include-seen] [--task <N>]                     joined to their parent task, for /m42-comment-sweep
 //   node tracker.mjs claim <task#> --window cc-<slug> [--force]
 //   node tracker.mjs heartbeat <task#> --window cc-<slug>
 //   node tracker.mjs release <task#> --window cc-<slug> --status "<status>"
@@ -176,7 +178,7 @@ function claimAge(tsStr) {
 const { cmd, pos, flags } = parseArgs(process.argv.slice(2))
 
 if (!cmd || flags.help) {
-  console.log('usage: tracker.mjs init|claims|row|comments|claim|heartbeat|release|done|link  (see file header)')
+  console.log('usage: tracker.mjs init|claims|row|comments|comment-sweep|claim|heartbeat|release|done|link  (see file header)')
   process.exit(0)
 }
 
@@ -218,6 +220,130 @@ if (cmd === 'claims') {
     )
   }
   if (!any) console.log('no active claims')
+  process.exit(0)
+}
+
+if (cmd === 'comment-sweep') {
+  // READ-ONLY. Sweep the Comments tab for comments to PROCESS, each joined to its
+  // parent Tracker row + full thread, so Claude Code can proactively turn Derek's
+  // requests into tasks. Buckets by the "Seen" (col E) watermark: unprocessed
+  // (empty) / deferred / held (Awaiting Derek) / terminal (already handled). NEVER
+  // writes. Default = Derek only (matched by RAW user-id substring — his author can
+  // be stored as a bare id with no parens); --all = all humans except machine
+  // back-links. Flags: --all --json --include-seen --task <N>.
+  const DEREK_ID = 'U08APFXGJ4U'
+  const wantAll = flags.all === true
+  const includeSeen = flags['include-seen'] === true
+  const onlyTask = flags.task ? String(flags.task).trim() : null
+  const asJson = flags.json === true
+  const MACHINE_RE = /agent m42|cc-sweep|cc-w\d|machine/i
+
+  let cRows
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'Comments'!A1:F` })
+    cRows = res.data.values ?? []
+  } catch (err) {
+    const msg = String(err?.message ?? err)
+    if (!/unable to parse range/i.test(msg)) die(`comment-sweep read failed: ${msg}`)
+    console.log(asJson ? '[]' : 'No comments tab yet — nothing to sweep.')
+    audit({ cmd: 'comment-sweep', tab: 'absent', count: 0 })
+    process.exit(0)
+  }
+  const cHeaders = (cRows[0] ?? []).map((h) => (h ?? '').trim())
+  const cNorm = (s) => s.replace(/\s+/g, '').toLowerCase()
+  const cIdx = (...names) => {
+    for (const n of names) {
+      const i = cHeaders.findIndex((h) => cNorm(h) === cNorm(n))
+      if (i >= 0) return i
+    }
+    return -1
+  }
+  const iTs = cIdx('Timestamp', 'Time')
+  const iTask = cIdx('Task #', 'Task#', 'Task')
+  const iAuthor = cIdx('Author')
+  const iText = cIdx('Comment', 'Text')
+  const iSeen = cIdx('Seen')
+  const iAtt = cIdx('Attachments', 'Files')
+  const cCell = (row, i) => (i >= 0 ? ((row?.[i] ?? '') + '').trim() : '')
+
+  // Join map: Task# -> parent Tracker row context.
+  const tcell = (r, i) => (i >= 0 ? ((data.rows[r][i] ?? '') + '').trim() : '')
+  const tByNum = new Map()
+  for (let r = 1; r < data.rows.length; r++) {
+    const n = tcell(r, data.cols.task)
+    if (n) tByNum.set(n, { title: tcell(r, data.cols.title), business: tcell(r, data.cols.business), status: tcell(r, data.cols.status), next: tcell(r, data.cols.next), link: tcell(r, data.cols.link) })
+  }
+
+  const stateOf = (seen) => {
+    const s = seen.toLowerCase()
+    if (!seen) return 'unprocessed'
+    if (s.startsWith('awaiting derek')) return 'held'
+    if (s.startsWith('deferred')) return 'deferred'
+    return 'terminal'
+  }
+
+  const items = []
+  cRows.slice(1).forEach((row, i) => {
+    const taskN = cCell(row, iTask)
+    if (!taskN) return
+    if (onlyTask && taskN !== onlyTask) return
+    const author = cCell(row, iAuthor)
+    const isDerek = author.includes(DEREK_ID)
+    if (!wantAll && !isDerek) return
+    if (wantAll && MACHINE_RE.test(author)) return // never process machine/back-link rows
+    const seen = cCell(row, iSeen)
+    const state = stateOf(seen)
+    if (!includeSeen && state === 'terminal') return
+    const parent = tByNum.get(taskN) || null
+    items.push({
+      key: `#${taskN}@${cCell(row, iTs)}`,
+      sheetRow: i + 2,
+      timestamp: cCell(row, iTs),
+      taskNum: taskN,
+      author,
+      isDerek,
+      text: cCell(row, iText),
+      attachments: cCell(row, iAtt),
+      seen,
+      state,
+      task: parent ? { found: true, ...parent } : { found: false },
+    })
+  })
+
+  audit({ cmd: 'comment-sweep', mode: wantAll ? 'all' : 'derek', count: items.length })
+
+  if (asJson) {
+    console.log(JSON.stringify(items, null, 2))
+    process.exit(0)
+  }
+
+  const buckets = { unprocessed: [], deferred: [], held: [], terminal: [] }
+  for (const it of items) buckets[it.state].push(it)
+  const printItem = (it) => {
+    const ctx = it.task.found ? `${it.task.business}-${it.taskNum} · ${it.task.status || '—'}` : `#${it.taskNum}  ⚠ parent not found`
+    console.log(`\n  [${it.key}]  (${ctx})`)
+    if (it.task.found && it.task.title) console.log(`    task: ${it.task.title}`)
+    console.log(`    ${it.author} @ ${it.timestamp}`)
+    console.log(`    "${it.text}"`)
+    if (it.attachments) console.log(`    📎 ${it.attachments}`)
+    if (it.seen) console.log(`    seen: ${it.seen}`)
+  }
+  console.log(`Comment sweep — ${wantAll ? 'all humans (excl. machine)' : 'Derek only'}${onlyTask ? ` · task #${onlyTask}` : ''}`)
+  console.log(`\n=== UNPROCESSED (${buckets.unprocessed.length}) ===`)
+  buckets.unprocessed.length ? buckets.unprocessed.forEach(printItem) : console.log('  (none)')
+  if (buckets.deferred.length) {
+    console.log(`\n=== PREVIOUSLY DEFERRED (${buckets.deferred.length}) ===`)
+    buckets.deferred.forEach(printItem)
+  }
+  if (buckets.held.length) {
+    console.log(`\n=== AWAITING DEREK (${buckets.held.length}) ===`)
+    buckets.held.forEach(printItem)
+  }
+  if (includeSeen && buckets.terminal.length) {
+    console.log(`\n=== ALREADY PROCESSED (${buckets.terminal.length}) ===`)
+    buckets.terminal.forEach(printItem)
+  }
+  console.log(`\nSurfaced ${buckets.unprocessed.length + buckets.deferred.length + buckets.held.length} to act on (of ${items.length} matched).`)
   process.exit(0)
 }
 
