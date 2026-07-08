@@ -180,6 +180,52 @@ function claimAge(tsStr) {
   return Number.isNaN(t) ? Infinity : (Date.now() - t) / 3.6e6
 }
 
+// ---- sweep lock (shared by sweep-lock and create) ----
+// Lock row in the hidden _CockpitState tab (inert to the cockpit: its userId
+// lookup never matches 'comment-sweep-lock'). A lock older than 15 min is
+// stale and auto-reclaimable.
+const STATE_TAB = '_CockpitState'
+const SWEEP_LOCK_KEY = 'comment-sweep-lock'
+
+function anonWindow() {
+  // Unique per invocation: two anonymous windows must NEVER share a slug —
+  // the lock treats same-slug as the same window and would let them interleave.
+  return 'cc-anon-' + Math.random().toString(36).slice(2, 6).padEnd(4, '0')
+}
+
+async function readSweepLock(sheets) {
+  let rows
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A1:C` })
+    rows = res.data.values ?? []
+  } catch (err) {
+    if (/unable to parse range/i.test(String(err?.message ?? err))) die(`${STATE_TAB} tab missing — open the cockpit once to create it`)
+    throw err
+  }
+  let lockRow = -1
+  for (let i = 1; i < rows.length; i++) if (((rows[i][0] ?? '') + '').trim() === SWEEP_LOCK_KEY) { lockRow = i; break }
+  return { rows, lockRow }
+}
+
+async function acquireSweepLock(sheets, win) {
+  const { rows, lockRow } = await readSweepLock(sheets)
+  if (lockRow >= 0) {
+    const heldIso = ((rows[lockRow][1] ?? '') + '').trim()
+    const heldWin = ((rows[lockRow][2] ?? '') + '').trim()
+    const ageMin = heldIso ? (Date.now() - Date.parse(heldIso)) / 60000 : 999
+    if (heldIso && ageMin < 15 && heldWin !== win)
+      die(`sweep already running in window "${heldWin}" (${ageMin.toFixed(1)}m ago) — wait, or run from that window`)
+  }
+  const target = lockRow >= 0 ? lockRow : rows.length
+  await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${target + 1}:C${target + 1}`, valueInputOption: 'RAW', requestBody: { values: [[SWEEP_LOCK_KEY, nowIso(), win]] } })
+}
+
+async function releaseSweepLock(sheets) {
+  const { lockRow } = await readSweepLock(sheets)
+  if (lockRow >= 0)
+    await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${lockRow + 1}:C${lockRow + 1}`, valueInputOption: 'RAW', requestBody: { values: [['', '', '']] } })
+}
+
 const { cmd, pos, flags } = parseArgs(process.argv.slice(2))
 
 if (!cmd || flags.help) {
@@ -353,39 +399,18 @@ if (cmd === 'comment-sweep') {
 }
 
 if (cmd === 'sweep-lock') {
-  // Serialize concurrent sweeps via a lock row in the hidden _CockpitState tab
-  // (inert to the cockpit: its userId lookup never matches 'comment-sweep-lock').
-  // A lock older than 15 min is stale and auto-reclaimable.
-  const STATE_TAB = '_CockpitState'
-  const LOCK_KEY = 'comment-sweep-lock'
+  // Serialize concurrent sweeps via the shared sweep-lock helpers (lock row in
+  // the hidden _CockpitState tab). Anonymous windows get a random unique slug —
+  // never a shared default, or two windows would look like the same holder.
   const action = pos[0]
-  const win = flags.window || 'cc-unknown'
+  const win = flags.window || anonWindow()
   if (action !== 'acquire' && action !== 'release') die('sweep-lock needs "acquire" or "release"')
-  let rows
-  try {
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A1:C` })
-    rows = res.data.values ?? []
-  } catch (err) {
-    if (/unable to parse range/i.test(String(err?.message ?? err))) die(`${STATE_TAB} tab missing — open the cockpit once to create it`)
-    throw err
-  }
-  let lockRow = -1
-  for (let i = 1; i < rows.length; i++) if (((rows[i][0] ?? '') + '').trim() === LOCK_KEY) { lockRow = i; break }
   if (action === 'acquire') {
-    if (lockRow >= 0) {
-      const heldIso = ((rows[lockRow][1] ?? '') + '').trim()
-      const heldWin = ((rows[lockRow][2] ?? '') + '').trim()
-      const ageMin = heldIso ? (Date.now() - Date.parse(heldIso)) / 60000 : 999
-      if (heldIso && ageMin < 15 && heldWin !== win)
-        die(`sweep already running in window "${heldWin}" (${ageMin.toFixed(1)}m ago) — wait, or run from that window`)
-    }
-    const target = lockRow >= 0 ? lockRow : rows.length
-    await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${target + 1}:C${target + 1}`, valueInputOption: 'RAW', requestBody: { values: [[LOCK_KEY, nowIso(), win]] } })
+    await acquireSweepLock(sheets, win)
     audit({ cmd: 'sweep-lock', action, window: win })
     console.log(`✓ sweep lock acquired (${win})`)
   } else {
-    if (lockRow >= 0)
-      await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${lockRow + 1}:C${lockRow + 1}`, valueInputOption: 'RAW', requestBody: { values: [['', '', '']] } })
+    await releaseSweepLock(sheets)
     audit({ cmd: 'sweep-lock', action, window: win })
     console.log('✓ sweep lock released')
   }
@@ -466,6 +491,10 @@ if (cmd === 'create') {
   // Mint a NEW task row. Claudio-only. Requires --from-comment (provenance anchor,
   // enables crash-safe idempotency) unless --standalone. Post-append duplicate-Task#
   // scan is a HARD STOP. Owner=Agent M42, Status=Not Started (unclaimed).
+  // SERIALIZED under the sweep lock: two windows minting concurrently would both
+  // read the same max Task# and append the same number (TOCTOU), so we acquire the
+  // lock FIRST, then RE-READ the tracker and run anchor-scan + max-Task# on the
+  // fresh data — the boot-time `data` is stale by the time the lock is ours.
   if (flags.claudio !== true) die('create requires --claudio (Claudio-only, per contract)')
   const fromComment = typeof flags['from-comment'] === 'string' ? flags['from-comment'] : null
   const standalone = flags.standalone === true
@@ -479,39 +508,47 @@ if (cmd === 'create') {
   if (nextSentence.length > 200) die('--next too long (≤200 chars)')
   if (nextSentence && /[\\/]|cc-|\.mjs|--/.test(nextSentence)) die('--next must be a plain Derek-readable sentence (no paths/slugs/flags)')
 
+  const createWin = typeof flags.window === 'string' ? flags.window : anonWindow()
+  await acquireSweepLock(sheets, createWin) // held by another window? it dies — wait for its release (≤15 min stale) and re-run
+  // From here every exit path releases the lock first (die() exits the process,
+  // so try/finally can't cover it). An uncaught crash still self-heals: the lock
+  // goes stale and auto-reclaims after 15 min.
+  const fresh = await load(sheets)
+
   const norm = (s) => (s ?? '').replace(/\s+/g, '').toLowerCase()
-  const idxOf = (...names) => { for (const n of names) { const i = data.headers.findIndex((h) => norm(h) === norm(n)); if (i >= 0) return i } return -1 }
+  const idxOf = (...names) => { for (const n of names) { const i = fresh.headers.findIndex((h) => norm(h) === norm(n)); if (i >= 0) return i } return -1 }
   const ownerCol = idxOf('Owner')
   const priorityCol = idxOf('Priority Tier', 'Priority')
 
   // Idempotency: if this comment already spawned a task, no-op.
   const anchor = fromComment ? `[from comment ${fromComment}]` : ''
-  if (anchor && data.cols.next >= 0) {
-    for (let r = 1; r < data.rows.length; r++) {
-      if (((data.rows[r][data.cols.next] ?? '') + '').includes(anchor)) {
-        console.log(`already created as #${((data.rows[r][data.cols.task] ?? '') + '').trim()} (anchor found) — no-op`)
+  if (anchor && fresh.cols.next >= 0) {
+    for (let r = 1; r < fresh.rows.length; r++) {
+      if (((fresh.rows[r][fresh.cols.next] ?? '') + '').includes(anchor)) {
+        await releaseSweepLock(sheets)
+        console.log(`already created as #${((fresh.rows[r][fresh.cols.task] ?? '') + '').trim()} (anchor found) — no-op`)
         process.exit(0)
       }
     }
   }
 
   let maxNum = 0
-  for (let r = 1; r < data.rows.length; r++) {
-    const n = parseInt(((data.rows[r][data.cols.task] ?? '') + '').replace(/[^\d]/g, ''), 10)
+  for (let r = 1; r < fresh.rows.length; r++) {
+    const n = parseInt(((fresh.rows[r][fresh.cols.task] ?? '') + '').replace(/[^\d]/g, ''), 10)
     if (!Number.isNaN(n) && n > maxNum) maxNum = n
   }
   const nextNum = maxNum + 1
   const nextAction = [nextSentence, anchor].filter(Boolean).join(' ').trim()
 
-  const row = new Array(data.headers.length).fill('')
-  row[data.cols.task] = String(nextNum)
-  if (data.cols.business >= 0) row[data.cols.business] = business
-  row[data.cols.title] = title
+  const row = new Array(fresh.headers.length).fill('')
+  row[fresh.cols.task] = String(nextNum)
+  if (fresh.cols.business >= 0) row[fresh.cols.business] = business
+  row[fresh.cols.title] = title
   if (ownerCol >= 0) row[ownerCol] = 'Agent M42'
   if (priorityCol >= 0 && priority) row[priorityCol] = priority
-  if (data.cols.status >= 0) row[data.cols.status] = 'Not Started'
-  if (data.cols.next >= 0 && nextAction) row[data.cols.next] = nextAction
-  if (data.cols.updated >= 0) row[data.cols.updated] = today()
+  if (fresh.cols.status >= 0) row[fresh.cols.status] = 'Not Started'
+  if (fresh.cols.next >= 0 && nextAction) row[fresh.cols.next] = nextAction
+  if (fresh.cols.updated >= 0) row[fresh.cols.updated] = today()
 
   await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${TAB}!A1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: [row] } })
 
@@ -521,8 +558,9 @@ if (cmd === 'create') {
   const vHeaders = (vRows[0] ?? []).map((h) => (h ?? '').trim())
   const vTaskCol = vHeaders.findIndex((h) => norm(h) === norm('Task #') || norm(h) === norm('Task#'))
   const dupes = vRows.slice(1).filter((rr) => ((rr[vTaskCol] ?? '') + '').trim() === String(nextNum))
+  await releaseSweepLock(sheets) // duplicate scan done — release before the verdict so a HARD STOP never strands the lock
   if (dupes.length !== 1) die(`HARD STOP: Task #${nextNum} appears ${dupes.length}× after append — DE-DUP manually before continuing`)
-  audit({ cmd: 'create', taskNum: nextNum, business, provenance: fromComment || 'standalone' })
+  audit({ cmd: 'create', taskNum: nextNum, business, provenance: fromComment || 'standalone', window: createWin })
   console.log(`✓ created ${business}-${nextNum} — Not Started (Owner: Agent M42)`)
   if (fromComment) console.log(`  anchored: ${anchor}`)
   process.exit(0)
@@ -628,6 +666,11 @@ if (cmd === 'heartbeat') {
 if (cmd === 'release') {
   if (!win) die('release needs --window')
   if (holder && holder !== win) die(`release refused: #${taskNum} is claimed by "${holder}", not ${win}`)
+  // "Done" is Claudio's final word (done command) — a late-finishing window must
+  // never regress it back to a working status. No --force bypass, on purpose.
+  const curStatus = ((data.rows[r][data.cols.status] ?? '') + '').trim()
+  if (curStatus === 'Done')
+    die(`task #${taskNum} is already Done — releasing would clobber a final state; talk to Claudio`)
   const status = flags.status
   if (!status || !isValidStatus(status))
     die(
@@ -652,13 +695,18 @@ if (cmd === 'release') {
 
 if (cmd === 'done') {
   if (!flags.claudio) die('"Done" is reserved to Claudio — re-run with --claudio after his approval')
+  // A live claim means a window may still be mid-run on this row — marking Done
+  // under it races that window's release. Coordinate first; --force only after
+  // Claudio's explicit OK.
+  if (holder && !flags.force)
+    die(`task #${taskNum} is claimed by ${holder} — coordinate a release first, or re-run with --force after Claudio's OK`)
   await writeCell(sheets, r, data.cols.status, 'Done')
   if (flags.link && data.cols.link >= 0) await writeCell(sheets, r, data.cols.link, String(flags.link))
   await writeCell(sheets, r, data.cols.updated, today())
   await writeCell(sheets, r, data.cols.claimedBy, '')
   await writeCell(sheets, r, data.cols.claimTs, '')
   await verifyRow(sheets, data, r, taskNum, '')
-  audit({ cmd, taskNum, link: flags.link || null })
+  audit({ cmd, taskNum, link: flags.link || null, forced: !!flags.force })
   console.log(`✓ #${taskNum} marked Done`)
   process.exit(0)
 }
