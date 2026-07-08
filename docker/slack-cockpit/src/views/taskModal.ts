@@ -104,7 +104,9 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
   const forTask = comments.filter((c) => c.taskNum === task.taskNum)
   blocks.push(divider(), section(`*Comments (${forTask.length})*`))
   for (const c of forTask.slice(-5)) {
-    blocks.push(context(`*${c.author || '—'}* · ${commentDate(c.timestamp)} — ${clamp(c.text, 300)}`))
+    // 📎 hints a pasted link/attachment (Slack auto-links the URL in mrkdwn).
+    const paperclip = /https?:\/\//i.test(c.text) ? '📎 ' : ''
+    blocks.push(context(`${paperclip}*${c.author || '—'}* · ${commentDate(c.timestamp)} — ${clamp(c.text, 300)}`))
   }
   blocks.push(actions([button('💬 Add comment', `comment:${task.taskNum}`, { primary: true })]))
 
