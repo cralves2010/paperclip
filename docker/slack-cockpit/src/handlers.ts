@@ -265,7 +265,7 @@ export function registerHandlers(app: App, cfg: Config): void {
         await openVerdictReasonModal(client, body.trigger_id, id, taskNum)
         return
       }
-      await applyVerdict(client, cfg, id, taskNum, undefined, authorFor(body), body.user.id, body.view?.id)
+      await applyVerdict(client, cfg, id, taskNum, undefined, authorFor(body), body.user.id, body.view?.id, body.view?.root_view_id)
     } catch (err) {
       logErr('verdict', err)
     }
@@ -294,7 +294,7 @@ export function registerHandlers(app: App, cfg: Config): void {
     }
     // Ack FIRST (update in place) so the Sheet round-trips never race the 3s deadline.
     await ack({ response_action: 'update', view: workingModal('💾 Saving your decision…') })
-    await applyVerdict(client, cfg, meta.id, meta.taskNum, reason, authorFor(body), body.user.id, body.view?.id)
+    await applyVerdict(client, cfg, meta.id, meta.taskNum, reason, authorFor(body), body.user.id, body.view?.id, body.view?.root_view_id)
   })
 
   // ── Search ────────────────────────────────────────────────────────────────
@@ -408,8 +408,19 @@ export function registerHandlers(app: App, cfg: Config): void {
     // refreshed task detail (with the new comment); from Home, a short confirm.
     try {
       if (viewId) {
-        const view = origin === 'modal' ? (await taskModalFor(cfg, taskNum, body.user.id)) ?? commentPostedModal(ref) : commentPostedModal(ref)
-        await client.views.update({ view_id: viewId, view })
+        const rootId: string | undefined = body.view?.root_view_id
+        // Posted from a task modal, the comment form is PUSHED on top of it. Confirm
+        // on the pushed view (Close is a meaningful dismiss) and refresh the ROOT task
+        // modal beneath — rendered ONCE — so closing the top reveals the current task
+        // with the new comment, never a stale view or a duplicate stacked modal.
+        if (origin === 'modal' && rootId && rootId !== viewId) {
+          const fresh = (await taskModalFor(cfg, taskNum, body.user.id)) ?? commentPostedModal(ref)
+          await client.views.update({ view_id: viewId, view: commentPostedModal(ref) })
+          await client.views.update({ view_id: rootId, view: fresh }).catch((e: any) => logErr('comment_submit.refreshRoot', e))
+        } else {
+          // From Home (no task modal beneath): a plain confirmation on the root modal.
+          await client.views.update({ view_id: viewId, view: commentPostedModal(ref) })
+        }
       }
     } catch (err) {
       logErr('comment_submit.refresh', err)
@@ -661,6 +672,7 @@ async function applyVerdict(
   author: string,
   userId: string,
   viewId: string | undefined,
+  rootViewId?: string,
 ): Promise<void> {
   const v = VERDICTS[id]
   let task: Task | undefined
@@ -673,9 +685,22 @@ async function applyVerdict(
   const ref = task ? taskRef(task) : `#${taskNum}`
   const actor = userId === DEREK_USER_ID ? 'Derek' : userId === cfg.notifyUserId ? 'Claudio' : 'Someone'
 
+  // A note verdict (request_changes/answer_release) is submitted from a modal PUSHED
+  // on top of the task modal, so viewId (the note modal) !== rootViewId (the task
+  // modal beneath). A direct verdict acts on the task modal itself (viewId === root).
+  const isPushed = !!(rootViewId && rootViewId !== viewId)
   const update = async (view: ModalView): Promise<void> => {
     if (viewId) await client.views.update({ view_id: viewId, view }).catch((e: any) => logErr('applyVerdict.update', e))
   }
+  const updateRoot = async (view: ModalView): Promise<void> => {
+    if (isPushed) await client.views.update({ view_id: rootViewId!, view }).catch((e: any) => logErr('applyVerdict.updateRoot', e))
+  }
+
+  // Instant feedback for DIRECT verdicts only (Approve/Reopen/Mark done): flip the
+  // task modal to a working state the moment the action registers, so it isn't a
+  // dead 1-3s pause during the multi-round-trip Sheet write. Note verdicts already
+  // showed this via the submit ack on the pushed modal — re-issuing it is wasteful.
+  if (!isPushed) await update(workingModal('💾 Saving your decision…'))
 
   let res: Awaited<ReturnType<typeof writeStatus>>
   try {
@@ -717,10 +742,14 @@ async function applyVerdict(
     }
   }
 
-  // Re-render the modal to the fresh task (buttons update, e.g. Approve → now offers Reopen).
+  // Re-render to the fresh task (buttons update, e.g. Approve → now offers Reopen).
+  // Direct verdict: flip the task modal in place. Note verdict: leave a short
+  // confirmation on the pushed modal (so Close is a meaningful dismiss) and refresh
+  // the ROOT task modal beneath — one fresh task, never two identical stacked modals.
   try {
-    const modal = await taskModalFor(cfg, taskNum, userId)
-    await update(modal ?? verdictDoneModal(ref))
+    const fresh = (await taskModalFor(cfg, taskNum, userId)) ?? verdictDoneModal(ref)
+    await update(isPushed ? verdictDoneModal(ref) : fresh)
+    await updateRoot(fresh)
   } catch (err) {
     logErr('applyVerdict.refresh', err)
     await update(verdictDoneModal(ref))
