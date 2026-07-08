@@ -139,7 +139,9 @@ export function suggestedCommand(cls: Classification, taskNum: string, author: s
 export function composeEnrichedDm(cls: Classification, base: BaseArgs): string {
   const ref = `${base.company}-${base.taskNum}`
   const head = `${CLASS_EMOJI[cls.klass]} ${CLASS_LABEL[cls.klass]} · ${ref} — from ${base.author}`
-  const quote = `> ${clamp(base.text, 400)}`
+  // Full comment (was clamped to 400 — self-imposed, hid most of every long note).
+  // Input caps at 3000 chars; a DM text field carries ~40k, so it always fits.
+  const quote = `> ${clamp(base.text, 3000)}`
   const impact = `🧠 ${clamp(cls.impact, 300)}`
   const link = `https://docs.google.com/spreadsheets/d/${base.sheetId}/edit`
 

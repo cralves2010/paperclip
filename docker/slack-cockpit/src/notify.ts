@@ -36,7 +36,11 @@ export function commentDmText(args: {
 }): string {
   return (
     `💬 New comment on #${args.taskNum} (${args.company} · ${clamp(args.title, 120)}) from ${args.author}:\n` +
-    `> ${clamp(args.text, 400)}\n` +
+    // Show Derek's comment IN FULL. The input modal caps him at 3000 chars
+    // (Slack plain_text_input ceiling), and a DM `text` field carries ~40k, so a
+    // whole comment always fits. The old 400 clamp was self-imposed and hid most
+    // of every longer note behind a bare sheet link. (Case 2026-07-08.)
+    `> ${clamp(args.text, 3000)}\n` +
     sheetLink(args.sheetId)
   )
 }

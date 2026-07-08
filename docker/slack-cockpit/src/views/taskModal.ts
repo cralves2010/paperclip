@@ -106,7 +106,10 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
   for (const c of forTask.slice(-5)) {
     // 📎 hints a pasted link/attachment (Slack auto-links the URL in mrkdwn).
     const paperclip = /https?:\/\//i.test(c.text) ? '📎 ' : ''
-    blocks.push(context(`${paperclip}*${c.author || '—'}* · ${commentDate(c.timestamp)} — ${clamp(c.text, 300)}`))
+    // 1500 (was 300): show the comment, not a teaser. A context element renders
+    // small but holds it; one comment is ≤3000 (input cap), and the DM already
+    // carries the full text. (Case 2026-07-08.)
+    blocks.push(context(`${paperclip}*${c.author || '—'}* · ${commentDate(c.timestamp)} — ${clamp(c.text, 1500)}`))
   }
   blocks.push(actions([button('💬 Add comment', `comment:${task.taskNum}`, { primary: true })]))
 
