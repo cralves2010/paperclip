@@ -3,7 +3,7 @@ import { STATUS_EMOJI, STATUS_LABEL, isDeliveredWithoutLink, type Comment, type 
 import { normalizeActor } from '../normalize.js'
 import { clamp, taskRef, truncateTitle } from '../text.js'
 import { verdictsFor } from '../verdicts.js'
-import { deriveAsk, STATUS_EXPLAINER, type ViewerActor } from './didactic.js'
+import { deriveActionLine, type ViewerActor } from './didactic.js'
 
 function commentDate(ts: string): string {
   // Prefer YYYY-MM-DD; fall back to the raw timestamp if unparseable.
@@ -27,28 +27,30 @@ const MOVE_DISPLAY: Record<'derek' | 'claudio' | 'team', string> = {
 }
 
 export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: ViewerActor = 'observer'): ModalView {
-  const ask = deriveAsk(task, viewer)
   const move = normalizeActor(task.ownerNext)
+  // Compute the verdicts ONCE — the same value drives both the buttons and the
+  // action line's affordance, so prose and buttons can never contradict (JRS-42 fix).
+  const isPrincipal = viewer === 'derek' || viewer === 'claudio'
+  const verdicts = verdictsFor(task, isPrincipal)
+  const hasVerdicts = verdicts.length > 0
 
   const blocks: Block[] = [
-    // (1) Kicker: the Task ref + status, above the title.
+    // (1) Kicker: the Task ref + status — the ONE and only place the status shows.
     context(`\`${taskRef(task)}\` · ${STATUS_EMOJI[task.status]} ${STATUS_LABEL[task.status]}`),
     // (2) Bold title (modal title is truncated to 24; this is the full one).
     section(`*${task.title}*`),
-    // (3) Hero — what (if anything) is being asked of the viewer.
-    section(`*${ask.label}*\n${ask.body}`),
-    // (4) Where it stands — status + its plain-English gloss.
-    section(`*Where it stands*\n${STATUS_EMOJI[task.status]} ${STATUS_LABEL[task.status]} — ${STATUS_EXPLAINER[task.status]}`),
+    // (3) Action line — whose move it is + what THIS viewer can do (old hero +
+    // "Where it stands" merged; affordance gated on hasVerdicts, never on ownership).
+    section(deriveActionLine(task, viewer, hasVerdicts)),
   ]
 
-  // (4b) Your decision — verdict buttons for a PRINCIPAL (Derek OR Claudio), keyed
-  // to status; observers get none. Direct-write verdicts carry a native confirm
-  // (mis-tap guard); Request-changes / Answer open a required-reason modal. Every
-  // write is CAS-guarded + reversible.
-  const verdicts = verdictsFor(task, viewer === 'derek' || viewer === 'claudio')
-  if (verdicts.length > 0) {
+  // (4) Verdict buttons for a PRINCIPAL (Derek OR Claudio), keyed to status;
+  // observers get none. The action line above already points at them ("…below"),
+  // so no separate "Your decision" header. Direct-write verdicts carry a native
+  // confirm (mis-tap guard); Request-changes / Answer open a required-reason modal.
+  // Every write is CAS-guarded + reversible.
+  if (hasVerdicts) {
     blocks.push(
-      context('*✅ Your decision*'),
       actions(
         verdicts.map((v) =>
           button(v.label, `verdict:${v.id}:${task.taskNum}`, {
@@ -89,7 +91,13 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
   if (task.deliverableOtherUrl) urlButtons.push(button('🔗 Open link', 'url_other', { url: task.deliverableOtherUrl }))
   if (urlButtons.length > 0) blocks.push(actions(urlButtons))
   else if (isDeliveredWithoutLink(task))
-    blocks.push(context(`⚠️ *Marked ${task.status === 'done' ? 'done' : 'delivered'}, but no access link is attached — Derek can’t open the deliverable yet.*`))
+    blocks.push(
+      context(
+        `⚠️ *Marked delivered, but no access link is attached${
+          move === 'derek' || move === 'claudio' ? ` — ${MOVE_DISPLAY[move]} can’t open it yet` : ' yet'
+        }.*`,
+      ),
+    )
   else blocks.push(context('_No deliverable linked yet._'))
 
   // (9) Comments — count + up to the last 5, then an add button.

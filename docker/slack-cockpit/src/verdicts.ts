@@ -80,8 +80,11 @@ export const VERDICTS: Record<VerdictId, Verdict> = {
  * verdict). Both principals see the same buttons on the same tasks — Claudio is the
  * co-operator and must be able to act on, test, and evaluate the board exactly as
  * Derek does (Claudio's request 2026-07-07). Every write is still CAS-guarded,
- * confirmed, and reversible; the modal hero (deriveAsk) still names whose move it
- * is, so context stays honest even though either principal can act.
+ * confirmed, and reversible. The modal builds its action line via
+ * deriveActionLine(task, viewer, verdictsFor(...).length > 0), so the "you can act"
+ * affordance is coupled to THIS same call by construction (it can never claim an
+ * action with no button, nor say "nothing needed" above one) while still naming
+ * whose move it is — the honesty the old deriveAsk broke for a non-owner principal.
  */
 export function verdictsFor(task: Task, isPrincipal: boolean): Verdict[] {
   if (!isPrincipal) return []

@@ -201,22 +201,32 @@ test('task modal clamps description and never emits a URL button without a URL',
   expect(json.length).toBeLessThan(20000)
 })
 
-test('task modal: kicker shows Task ref, hero + "Where it stands" always render', () => {
+test('task modal: kicker carries the status once; the merged action line replaces "Where it stands"', () => {
   const json = JSON.stringify(buildTaskModal(t({ taskNum: '43', company: 'JRS', status: 'needs_you', ownerNext: 'Derek' }), [], 'derek'))
-  expect(json).toContain('JRS-43') // kicker
-  expect(json).toContain('Where it stands')
-  expect(json).toContain('A person needs to weigh in before it can move.') // STATUS_EXPLAINER
-  expect(json).toContain('🟠 Your move') // deriveAsk hero (viewer IS Derek)
-  expect(json).toContain('Whose move') // facts grid
+  expect(json).toContain('JRS-43') // kicker (ref)
+  expect(json).toContain('Needs you') // status label — in the kicker
+  expect(json).not.toContain('Where it stands') // merged away (no duplicate status block)
+  expect(json).toContain('Your move.') // action line (viewer IS Derek, has buttons)
+  expect(json).toContain('answer & release below') // affordance points straight at the buttons
+  expect(json).toContain('Whose move') // facts grid backstop
   expect(json).not.toContain('Task ID') // duplicate grid field dropped
 })
 
-test('task modal hero is viewer-aware for the same task', () => {
-  const task = t({ status: 'delivered_awaiting', ownerNext: 'Derek' })
-  expect(JSON.stringify(buildTaskModal(task, [], 'derek'))).toContain('🟡 Your move')
+test('task modal action line is viewer-aware AND never contradicts the buttons (the JRS-42 fix)', () => {
+  const task = t({ status: 'delivered_awaiting', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/1' })
+  // Derek IS the owner → "Your move."
+  expect(JSON.stringify(buildTaskModal(task, [], 'derek'))).toContain('Your move.')
+  // Claudio (principal, owner = Derek) → ownership + capability in one line; NEVER "nothing"
+  // while the Approve/Request-changes buttons render below.
+  const claudio = JSON.stringify(buildTaskModal(task, [], 'claudio'))
+  expect(claudio).toContain('Derek’s call — you can act on it.')
+  expect(claudio).toContain('verdict:approve:') // the buttons ARE there
+  expect(claudio).not.toMatch(/nothing/i) // …and the copy no longer denies them
+  // Observer → waiting, read-only, no action affordance.
   const observer = JSON.stringify(buildTaskModal(task, [], 'observer'))
   expect(observer).toContain('Waiting on Derek')
   expect(observer).not.toContain('Your move')
+  expect(observer).not.toContain('verdict:')
 })
 
 test('task modal: "What this is" renders only with a description, as a blockquote', () => {
@@ -260,13 +270,11 @@ test('task modal: BOTH principals (Derek + Claudio) get verdict buttons with a c
   const task = t({ taskNum: '42', company: 'JRS', status: 'delivered_awaiting', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/1' })
   for (const viewer of ['derek', 'claudio'] as const) {
     const json = JSON.stringify(buildTaskModal(task, [], viewer))
-    expect(json).toContain('Your decision')
     expect(json).toContain('verdict:approve:42')
     expect(json).toContain('verdict:request_changes:42')
     expect(json).toContain('"confirm"') // native mis-tap confirm
   }
   const observer = JSON.stringify(buildTaskModal(task, [], 'observer'))
-  expect(observer).not.toContain('Your decision')
   expect(observer).not.toContain('verdict:')
 })
 
