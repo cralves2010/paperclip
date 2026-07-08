@@ -297,6 +297,23 @@ test('home: the 🔔 "since you were here" digest renders from deltas; the all-c
   expect(first).not.toContain('Since you were here')
 })
 
+test('home: a task changed since last visit wears a 🆕 selo on its section row; unchanged rows stay clean', () => {
+  const tasks = [
+    t({ taskNum: '43', company: 'JRS', status: 'delivered_awaiting', title: 'changed doc', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/1' }),
+    t({ taskNum: '44', company: 'JRS', status: 'delivered_awaiting', title: 'untouched doc', ownerNext: 'Derek', deliverableDriveUrl: 'https://d/2' }),
+  ]
+  const deltas = [{ taskNum: '43', company: 'JRS', title: 'changed doc', kind: 'into_review' as const, needsYou: true }]
+  const json = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }, { deltas, lastSeenTs: 1, now: 2 }))
+  // The 🆕 sits immediately before the ROW title (unique to the row renderer; the
+  // digest puts 🆕 after the task ref), proving the selo is on the board row itself.
+  expect(json).toContain('🆕 *changed doc*')
+  expect(json).toContain('untouched doc') // the unchanged row still renders…
+  expect(json).not.toContain('🆕 *untouched doc*') // …but carries no selo
+  // With no deltas (first visit / all caught up) NO row wears a selo.
+  const clean = JSON.stringify(buildHomeView(tasks, { kind: 'portfolio' }))
+  expect(clean).not.toContain('🆕')
+})
+
 test('home: the digest on top of a full board still fits under 100 blocks', () => {
   const tasks: Task[] = []
   for (let i = 0; i < 30; i++) tasks.push(t({ taskNum: `co${i}`, company: `Co${i}`, status: 'in_progress' }))

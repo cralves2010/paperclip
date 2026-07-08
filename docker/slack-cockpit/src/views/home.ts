@@ -131,6 +131,10 @@ function commentBadge(counts: Map<string, number> | undefined, t: Task): string 
   const n = counts?.get(t.taskNum) ?? 0
   return n > 0 ? ` · 💬 ${n}` : ''
 }
+/** 🆕 title prefix for a row whose task changed since the viewer's last visit —
+ * driven by the same reliable snapshot-diff as the digest (NOT the date-only
+ * "Last updated" cell). Empty string when unchanged so untouched rows are clean. */
+const newTag = (isNew: boolean): string => (isNew ? '🆕 ' : '')
 
 // What a parked task is waiting on: prefer the explicit dependency field, else a
 // status cell that actually reads like a blocker, else a safe generic. Never invents.
@@ -146,11 +150,11 @@ function parkedWaitingText(t: Task): string {
 /** 📬 Ready-for-review row: inline deliverable link (zero handler) + a primary
  * "Review" verb. The status token is omitted — the section header already says
  * "Delivered / awaiting", and dropping it keeps the meta line off a phone's 2nd row. */
-function reviewRow(t: Task, counts?: Map<string, number>): Block {
+function reviewRow(t: Task, counts?: Map<string, number>, isNew = false): Block {
   const actor = ACTOR_LABEL[normalizeActor(t.ownerNext)]
   const url = deliverableUrl(t)!
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${actor}${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
+    `${newTag(isNew)}*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${actor}${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
     button('Review', `open_task:${t.taskNum}`, { primary: true }),
   )
 }
@@ -158,11 +162,11 @@ function reviewRow(t: Task, counts?: Map<string, number>): Block {
 /** 🚧 Preview-ready row: a finished preview to peek at, PLUS what it waits on + who.
  * Grey "Open" (a peek/nudge, not the primary "Review" verdict of a clean hand-off);
  * the inline link is "👀 Preview" (a draft), deliberately not "📄 Doc". */
-function parkedRow(t: Task, counts?: Map<string, number>): Block {
+function parkedRow(t: Task, counts?: Map<string, number>, isNew = false): Block {
   const url = deliverableUrl(t)!
   const actor = ACTOR_LABEL[normalizeActor(t.ownerNext)]
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\`${commentBadge(counts, t)} · <${url}|👀 Preview>\n⏳ ${actor} · ${parkedWaitingText(t)}`,
+    `${newTag(isNew)}*${clamp(t.title, 200)}*\n\`${taskRef(t)}\`${commentBadge(counts, t)} · <${url}|👀 Preview>\n⏳ ${actor} · ${parkedWaitingText(t)}`,
     button('Open', `open_task:${t.taskNum}`),
   )
 }
@@ -170,27 +174,27 @@ function parkedRow(t: Task, counts?: Map<string, number>): Block {
 /** 🎉 Recently-shipped spot-check row: grey (settled) "Open" + inline destination
  * link. Status token omitted (the "Recently shipped" header already says Done);
  * the link uses linkLabel() so a Slack-thread win shows 💬 Thread, not a false 📄. */
-function shippedRow(t: Task, counts?: Map<string, number>): Block {
+function shippedRow(t: Task, counts?: Map<string, number>, isNew = false): Block {
   const url = deliverableUrl(t)!
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\`${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
+    `${newTag(isNew)}*${clamp(t.title, 200)}*\n\`${taskRef(t)}\`${commentBadge(counts, t)} · <${url}|${linkLabel(t)}>`,
     button('Open', `open_task:${t.taskNum}`),
   )
 }
 
 /** Needs-a-decision hero row (unchanged format): primary "Open". */
-function decisionRow(t: Task, counts?: Map<string, number>): Block {
+function decisionRow(t: Task, counts?: Map<string, number>, isNew = false): Block {
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}${commentBadge(counts, t)}`,
+    `${newTag(isNew)}*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]}${commentBadge(counts, t)}`,
     button('Open', `open_task:${t.taskNum}`, { primary: true }),
   )
 }
 
 /** ⚠️ Delivered-but-linkless defect row — bold + individually openable, never a folded count. */
-function missingRow(t: Task, counts?: Map<string, number>): Block {
+function missingRow(t: Task, counts?: Map<string, number>, isNew = false): Block {
   const actor = ACTOR_LABEL[normalizeActor(t.ownerNext)]
   return section(
-    `*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]} · ⚠️ no link · ${actor}${commentBadge(counts, t)}`,
+    `${newTag(isNew)}*${clamp(t.title, 200)}*\n\`${taskRef(t)}\` · ${STATUS_EMOJI[t.status]} ${STATUS_LABEL[t.status]} · ⚠️ no link · ${actor}${commentBadge(counts, t)}`,
     button('Open', `open_task:${t.taskNum}`, { primary: true }),
   )
 }
@@ -205,6 +209,8 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     : liveProvenance(opts.syncedAtMs, opts.now)
 
   const deltas = opts.deltas ?? []
+  // Task#s that changed since the viewer's last visit → drives the per-row 🆕 selo.
+  const changed = new Set(deltas.map((d) => d.taskNum))
   const blocks: Block[] = [header('Agent M42 · Portfolio Cockpit'), context(provenance)]
 
   // Personal "since your last visit" line — App Home cannot push, so this shows the
@@ -254,7 +260,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     )
   if (ready.length > 0) {
     blocks.push(header('📬 Ready for review'))
-    for (const t of ready.slice(0, REVIEW_CAP)) blocks.push(reviewRow(t, counts))
+    for (const t of ready.slice(0, REVIEW_CAP)) blocks.push(reviewRow(t, counts, changed.has(t.taskNum)))
     if (ready.length > REVIEW_CAP) {
       blocks.push(actions([button(`📋 See all ${ready.length} ready`, 'open_board_status:delivered_awaiting')]))
     }
@@ -271,7 +277,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     )
   if (parked.length > 0) {
     blocks.push(divider(), header('🚧 Preview ready — waiting on an input'))
-    for (const t of parked.slice(0, PARKED_CAP)) blocks.push(parkedRow(t, counts))
+    for (const t of parked.slice(0, PARKED_CAP)) blocks.push(parkedRow(t, counts, changed.has(t.taskNum)))
     if (parked.length > PARKED_CAP) {
       // UNFILTERED all-tasks — the section spans in_progress+blocked, so a
       // status-filtered deep-link would drop the other half.
@@ -290,7 +296,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     blocks.push(
       context(`🎉 *${done.length} shipped* · ${companiesWithDone} ${companiesWithDone === 1 ? 'company' : 'companies'}${tail}`),
     )
-    for (const t of done.filter(hasDeliverableLink).sort(byRecent).slice(0, SHIP_CAP)) blocks.push(shippedRow(t, counts))
+    for (const t of done.filter(hasDeliverableLink).sort(byRecent).slice(0, SHIP_CAP)) blocks.push(shippedRow(t, counts, changed.has(t.taskNum)))
     blocks.push(actions([button(`📋 See all ${done.length} shipped`, 'open_board_status:done')]))
   }
 
@@ -315,7 +321,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     if (items.length === 0) {
       blocks.push(context(g.empty))
     } else {
-      for (const t of items.slice(0, GROUP_CAP)) blocks.push(decisionRow(t, counts))
+      for (const t of items.slice(0, GROUP_CAP)) blocks.push(decisionRow(t, counts, changed.has(t.taskNum)))
       // Only show the counter when rows were actually hidden — "Showing 1 of 1"
       // under a one-row group is pure noise (the row is right there).
       if (items.length > GROUP_CAP) blocks.push(context(`Showing ${GROUP_CAP} of ${items.length} · more in 📋 All tasks`))
@@ -334,7 +340,7 @@ export function buildHomeView(tasks: Task[], _state: ViewState, opts: HomeOpts =
     )
   if (missing.length > 0) {
     blocks.push(divider(), header('⚠️ Delivered — link missing'))
-    for (const t of missing.slice(0, LINK_CAP)) blocks.push(missingRow(t, counts))
+    for (const t of missing.slice(0, LINK_CAP)) blocks.push(missingRow(t, counts, changed.has(t.taskNum)))
     if (missing.length > LINK_CAP) {
       blocks.push(context(`Showing ${LINK_CAP} of ${missing.length} · Claudio to attach links`))
     }
