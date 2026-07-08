@@ -72,7 +72,7 @@ export function buildCommentModal(args: {
       section(`*${clamp(args.title, 200)}*\n\`${taskRef(args)}\``),
       plainInput('comment', 'Comment', 'comment_text', {
         multiline: true,
-        maxLength: 1000,
+        maxLength: 3000, // Slack's hard cap for plain_text_input (was 1000); the Sheet cell holds far more.
         placeholder: 'Add a comment for the team working this task…',
       }),
     ],

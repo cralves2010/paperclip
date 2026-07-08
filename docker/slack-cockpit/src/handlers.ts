@@ -602,7 +602,7 @@ async function openVerdictReasonModal(client: any, triggerId: string, id: Verdic
     title: { type: 'plain_text', text: isChanges ? 'Request changes' : 'Answer & release' },
     submit: { type: 'plain_text', text: 'Send' },
     close: { type: 'plain_text', text: 'Cancel' },
-    blocks: [plainInput('reason', label, 'reason_text', { multiline: true, maxLength: 900, placeholder })],
+    blocks: [plainInput('reason', label, 'reason_text', { multiline: true, maxLength: 3000, placeholder })],
   }
   try {
     // PUSH (not open): this modal is always raised from WITHIN the open task modal,
