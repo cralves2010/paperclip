@@ -603,18 +603,18 @@ async function openVerdictReasonModal(client: any, triggerId: string, id: Verdic
 }
 
 /** The Next-action (col K) each verdict stamps — one Derek-readable sentence, or undefined to leave it. */
-function verdictNextAction(id: VerdictId, reason?: string): string | undefined {
+function verdictNextAction(id: VerdictId, actor: string, reason?: string): string | undefined {
   switch (id) {
     case 'approve':
-      return 'Approved by Derek — team to wrap up and close.'
+      return `Approved by ${actor} — team to wrap up and close.`
     case 'mark_done':
       return undefined
     case 'request_changes':
-      return clamp(`Revise per Derek: ${(reason ?? '').trim()}`, 200)
+      return clamp(`Revise per ${actor}: ${(reason ?? '').trim()}`, 200)
     case 'answer_release':
-      return 'Derek answered — team to proceed (see comment).'
+      return `${actor} answered — team to proceed (see comment).`
     case 'reopen':
-      return 'Reopened by Derek for more work.'
+      return `Reopened by ${actor} for more work.`
   }
 }
 
@@ -671,6 +671,7 @@ async function applyVerdict(
     logErr('applyVerdict.lookup', err)
   }
   const ref = task ? taskRef(task) : `#${taskNum}`
+  const actor = userId === DEREK_USER_ID ? 'Derek' : userId === cfg.notifyUserId ? 'Claudio' : 'Someone'
 
   const update = async (view: ModalView): Promise<void> => {
     if (viewId) await client.views.update({ view_id: viewId, view }).catch((e: any) => logErr('applyVerdict.update', e))
@@ -682,7 +683,7 @@ async function applyVerdict(
       taskNum,
       expect: v.expect,
       rawStatus: rawStatusFor(id, reason),
-      nextAction: verdictNextAction(id, reason),
+      nextAction: verdictNextAction(id, actor, reason),
     })
   } catch (err) {
     // A thrown API error mid-write must still give Derek explicit feedback (never a
@@ -730,8 +731,7 @@ async function applyVerdict(
 
   // DM Claudio (best-effort; never rolls back the committed write).
   try {
-    const actorName = userId === DEREK_USER_ID ? 'Derek' : userId === cfg.notifyUserId ? 'Claudio' : 'Someone'
-    await dmClaudio(client, cfg, verdictDmText(id, ref, actorName, reason, res.warning))
+    await dmClaudio(client, cfg, verdictDmText(id, ref, actor, reason, res.warning))
   } catch (err) {
     logErr('applyVerdict.dm', err)
   }
