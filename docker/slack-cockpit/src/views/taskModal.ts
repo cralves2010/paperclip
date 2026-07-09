@@ -12,6 +12,25 @@ function commentDate(ts: string): string {
   return Number.isNaN(d) ? ts : new Date(d).toISOString().slice(0, 10)
 }
 
+/** Render a comment author VISIBLY. An author carrying a Slack user id becomes a
+ * real mention pill (`<@U…>` — blue, human-scannable; the raw "@username (Uid)"
+ * form only pilled when Slack happened to auto-link the username). A machine
+ * identity (no id) gets a 🤖 so it never reads as a silent grey nobody.
+ * (Claudio's report 2026-07-09: Derek's pill was visible, ours was invisible —
+ * he missed a posted reply entirely.) */
+function authorMrkdwn(author: string): string {
+  const a = (author || '—').trim()
+  const m = a.match(/\((U[A-Z0-9]{8,})\)/)
+  if (m) {
+    const label = a
+      .replace(m[0], '')
+      .replace(/^@\S+\s*/, '') // drop the raw "@username" — the pill already names them
+      .trim()
+    return `<@${m[1]}>${label ? ` ${label}` : ''}`
+  }
+  return `🤖 *${a}*`
+}
+
 /** Render text as a Slack mrkdwn blockquote — every line prefixed with "> ". */
 function blockquote(s: string): string {
   return s
@@ -112,7 +131,7 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
     // 1500 (was 300): show the comment, not a teaser. A context element renders
     // small but holds it; one comment is ≤3000 (input cap), and the DM already
     // carries the full text. (Case 2026-07-08.)
-    blocks.push(context(`${paperclip}*${c.author || '—'}* · ${commentDate(c.timestamp)} — ${clamp(c.text, 1500)}`))
+    blocks.push(context(`${paperclip}${authorMrkdwn(c.author)} · ${commentDate(c.timestamp)} — ${clamp(c.text, 1500)}`))
   }
   const bottomRow: Block[] = [button('💬 Add comment', `comment:${task.taskNum}`, { primary: true })]
   const inputDocUrl = findInputDocUrl(comments, task.taskNum)

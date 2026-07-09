@@ -330,3 +330,17 @@ test('home: the digest on top of a full board still fits under 100 blocks', () =
   const view = buildHomeView(tasks, { kind: 'portfolio' }, { deltas, lastSeenTs: 1, now: 2 })
   expect(view.blocks.length).toBeLessThan(100)
 })
+
+test('task modal: comment authors render as mention pills (id present) or 🤖 (machine)', () => {
+  const task = t({ taskNum: '30', company: 'Brightly' })
+  const comments = [
+    { taskNum: '30', author: '@derek.m (U08APFXGJ4U)', text: 'question', timestamp: '2026-07-08T22:08:54Z', seen: '' },
+    { taskNum: '30', author: '@claudio.a (U08C8QTNBJ9) via Agent M42', text: 'answer', timestamp: '2026-07-09T18:43:26Z', seen: 'x' },
+    { taskNum: '30', author: 'Agent M42 (cc-sweep)', text: 'note', timestamp: '2026-07-09T19:00:00Z', seen: 'x' },
+  ]
+  const json = JSON.stringify(buildTaskModal(task, comments as any, 'derek'))
+  expect(json).toContain('<@U08APFXGJ4U>') // Derek → real mention pill
+  expect(json).toContain('<@U08C8QTNBJ9> via Agent M42') // approved reply → pill + suffix
+  expect(json).toContain('🤖 *Agent M42 (cc-sweep)*') // machine → visible robot
+  expect(json).not.toContain('@derek.m (U08APFXGJ4U)') // raw form never rendered
+})
