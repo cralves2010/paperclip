@@ -6,6 +6,7 @@ import { buildSnapshot, diffSnapshot, lastCommentTurnByTask, taskHasCommentFrom,
 import { commentCountByTask } from './sheets.js'
 import { appendComment, createTask, writeStatus } from './sheets-write.js'
 import { dmClaudio, dmUser, createDmText, replyToDerekDmText } from './notify.js'
+import { createInputDoc, findInputDocUrl, docMarkerText, DOC_MARKER_AUTHOR, DOC_MARKER_PREFIX } from './docs.js'
 import { classifyAndCompose } from './classify.js'
 import { plainInput, section, type ModalView } from './blocks.js'
 import { clamp, taskRef } from './text.js'
@@ -51,7 +52,11 @@ async function publishForUser(client: any, cfg: Config, userId: string, trackVis
     return
   }
   try {
-    const [tasks, comments] = await Promise.all([getTasks(cfg), getComments(cfg)])
+    const [tasks, allComments] = await Promise.all([getTasks(cfg), getComments(cfg)])
+    // Input-doc markers are machine bookkeeping, not thread comments — drop them from every
+    // digest derivation (count badge, snapshot, turn) so the board/home agree with the task
+    // modal (which also hides them) and a marker never masks a real "your move" reply.
+    const comments = allComments.filter((c) => !c.text.startsWith(DOC_MARKER_PREFIX))
     const commentCounts = commentCountByTask(comments)
     const state = getState(userId)
     const syncedAtMs = lastSyncAt() ?? undefined
@@ -245,6 +250,20 @@ export function registerHandlers(app: App, cfg: Config): void {
       await openCommentModal(client, cfg, body.trigger_id, taskNum, 'modal', true)
     } catch (err) {
       logErr('comment_button', err)
+    }
+  })
+
+  // ── "📄 Big text / table": find-or-create the per-task input Doc ───────────
+  // Update-in-place on body.view.id (a views.update, not a fresh trigger_id), so the
+  // 3s deadline is never at risk — same pattern as applyVerdict's direct path.
+  app.action(/^open_input_doc:/, async ({ ack, action, body, client }: any) => {
+    await ack()
+    try {
+      if (!isPrincipal(body.user.id)) return
+      const taskNum = String(action.action_id).split(':')[1]
+      await provisionInputDoc(client, cfg, taskNum, body.user.id, body.view?.id)
+    } catch (err) {
+      logErr('open_input_doc', err)
     }
   })
 
@@ -579,6 +598,101 @@ function loadingModal(text: string): ModalView {
     close: { type: 'plain_text', text: 'Close' },
     blocks: [section(text)],
   }
+}
+
+/**
+ * Find-or-create the per-task input Doc, then re-render the task modal in place so the
+ * link shows. Dedup by scanning the task's comments for the marker; reuse if present,
+ * else create (owner = hello@), share, and append the marker as a MACHINE comment
+ * pre-stamped Seen-terminal (invisible to the Derek sweep, --include-seen, and the Home
+ * "your move" digest; fires NO DM — appendComment is a plain write, the Phase-1 DM lives
+ * only in comment_submit). Every step after the create is best-effort.
+ */
+async function provisionInputDoc(
+  client: any,
+  cfg: Config,
+  taskNum: string,
+  userId: string,
+  viewId: string | undefined,
+): Promise<void> {
+  const update = async (view: ModalView): Promise<void> => {
+    if (viewId) await client.views.update({ view_id: viewId, view }).catch((e: any) => logErr('provisionInputDoc.update', e))
+  }
+  if (cfg.demo) {
+    await update(buildDemoNoticeModal('comment'))
+    return
+  }
+  // opt-in-live guard: the board runs on the SA even when OAuth is unset (see config.ts).
+  if (!cfg.googleOauthRefreshToken) {
+    await update(buildActErrorModal("The input-doc feature isn't configured yet — ping Claudio."))
+    return
+  }
+  await update(workingModal('📄 Setting up your input doc…'))
+
+  let task: Task | undefined
+  let comments: Comment[] = []
+  try {
+    const [tasks, allComments] = await Promise.all([getTasks(cfg), getComments(cfg)])
+    task = tasks.find((t) => t.taskNum === taskNum)
+    comments = allComments
+  } catch (err) {
+    logErr('provisionInputDoc.lookup', err)
+  }
+  if (!task) {
+    await update(buildActErrorModal(`Task ${taskNum} not found.`))
+    return
+  }
+  const ref = taskRef(task)
+
+  // FIND: reuse an existing marker URL (a re-click never mints a 2nd doc).
+  let url = findInputDocUrl(comments, taskNum)
+  if (!url) {
+    // CREATE is the only truly fatal step: a failure here means no Doc exists.
+    let created
+    try {
+      created = await createInputDoc(cfg, { title: `${ref} — input` })
+    } catch (err) {
+      logErr('provisionInputDoc.create', err)
+      await update(buildActErrorModal(`Couldn't create the input doc for ${ref}. Try again in a moment or ping Claudio.`))
+      return
+    }
+    url = created.url
+    // Marker save is BEST-EFFORT — the Doc already exists. If the Sheet write fails
+    // (transient 429/500), never report "create failed" and never discard the URL: a
+    // lost URL means the next click can't dedup and would mint a SECOND orphan Doc.
+    // Surface the link so the user keeps it, and stop (no marker → no "Open" button).
+    try {
+      await appendComment(
+        cfg,
+        {
+          taskNum,
+          author: DOC_MARKER_AUTHOR,
+          text: docMarkerText(url),
+          seen: `Skipped — cockpit input doc (${new Date().toISOString().slice(0, 10)})`,
+        },
+        undefined,
+      )
+      invalidate()
+    } catch (err) {
+      logErr('provisionInputDoc.marker', err)
+      await update(
+        buildActErrorModal(
+          `${ref}: your input doc is ready — ${url}\n(Couldn't save the link to the tracker, so it won't reappear on this task — keep this URL.)`,
+        ),
+      )
+      return
+    }
+  }
+
+  // Re-render the fresh task modal (now shows "📄 Open input doc").
+  try {
+    const fresh = (await taskModalFor(cfg, taskNum, userId)) ?? buildActErrorModal(`${ref}: your input doc is ready — ${url}`)
+    await update(fresh)
+  } catch (err) {
+    logErr('provisionInputDoc.refresh', err)
+    await update(buildActErrorModal(`${ref}: your input doc is ready — ${url}`))
+  }
+  await publishForUser(client, cfg, userId).catch(() => {})
 }
 
 /** Shown after a submit is acked while the Sheet write completes. */

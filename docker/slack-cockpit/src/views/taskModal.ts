@@ -1,5 +1,6 @@
 import { actions, button, confirmDialog, context, divider, section, sectionFields, type Block, type ModalView } from '../blocks.js'
 import { STATUS_EMOJI, STATUS_LABEL, isDeliveredWithoutLink, type Comment, type Task } from '../model.js'
+import { findInputDocUrl, DOC_MARKER_PREFIX } from '../docs.js'
 import { normalizeActor } from '../normalize.js'
 import { clamp, taskRef, truncateTitle } from '../text.js'
 import { verdictsFor } from '../verdicts.js'
@@ -101,7 +102,9 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
   else blocks.push(context('_No deliverable linked yet._'))
 
   // (9) Comments — count + up to the last 5, then an add button.
-  const forTask = comments.filter((c) => c.taskNum === task.taskNum)
+  // Filter the machine input-doc MARKER out of the visible thread + count (the "📄 Open
+  // input doc" button below already surfaces it); findInputDocUrl still sees it via `comments`.
+  const forTask = comments.filter((c) => c.taskNum === task.taskNum && !c.text.startsWith(DOC_MARKER_PREFIX))
   blocks.push(divider(), section(`*Comments (${forTask.length})*`))
   for (const c of forTask.slice(-5)) {
     // 📎 hints a pasted link/attachment (Slack auto-links the URL in mrkdwn).
@@ -111,7 +114,16 @@ export function buildTaskModal(task: Task, comments: Comment[] = [], viewer: Vie
     // carries the full text. (Case 2026-07-08.)
     blocks.push(context(`${paperclip}*${c.author || '—'}* · ${commentDate(c.timestamp)} — ${clamp(c.text, 1500)}`))
   }
-  blocks.push(actions([button('💬 Add comment', `comment:${task.taskNum}`, { primary: true })]))
+  const bottomRow: Block[] = [button('💬 Add comment', `comment:${task.taskNum}`, { primary: true })]
+  const inputDocUrl = findInputDocUrl(comments, task.taskNum)
+  if (inputDocUrl) {
+    // A doc already exists → everyone gets a plain open-link (routes to the existing /^url_/ ack).
+    bottomRow.push(button('📄 Open input doc', 'url_inputdoc', { url: inputDocUrl }))
+  } else if (isPrincipal) {
+    // No doc yet → only a principal may provision one (mints an org Doc owned by hello@).
+    bottomRow.push(button('📄 Big text / table', `open_input_doc:${task.taskNum}`))
+  }
+  blocks.push(actions(bottomRow))
 
   return {
     type: 'modal',

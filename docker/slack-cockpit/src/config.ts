@@ -16,6 +16,16 @@ export interface Config {
   // is truthy AND anthropicApiKey is set — otherwise the DM is today's raw text.
   classifyEnabled: boolean
   anthropicApiKey: string
+  // Phase 2 (per-task input Docs): OAuth-as-human client (owner = hello@m42hq.com).
+  // A Service Account CAN'T own/create Docs (403 storageQuotaExceeded), so per-task Docs
+  // are created by this OAuth client; the SA in sheets-write.ts stays for the Sheet.
+  // opt (NOT req) in live: additive to ONE button — never couple the core read-only
+  // board's boot to its presence. The handler guards per-click instead.
+  googleOauthClientId: string
+  googleOauthClientSecret: string
+  googleOauthRefreshToken: string
+  /** Named users each created Doc is shared with (writer). Comma-split; may be empty. */
+  docShareEmails: string[]
 }
 
 function req(env: NodeJS.ProcessEnv, key: string): string {
@@ -56,6 +66,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     trackerTab: resolveTrackerTab(sheetRange, opt(env, 'COCKPIT_TRACKER_TAB', 'Tracker')),
     classifyEnabled: /^(1|true|yes)$/i.test((env.COCKPIT_CLASSIFY ?? '').trim()),
     anthropicApiKey: opt(env, 'ANTHROPIC_API_KEY'),
+    // Phase 2 OAuth-as-human (Docs/Drive); opt-in-live so a missing var degrades the
+    // single input-doc button, never the board (handler guards per-click).
+    googleOauthClientId: opt(env, 'GOOGLE_OAUTH_CLIENT_ID'),
+    googleOauthClientSecret: opt(env, 'GOOGLE_OAUTH_CLIENT_SECRET'),
+    googleOauthRefreshToken: opt(env, 'GOOGLE_OAUTH_REFRESH_TOKEN'),
+    docShareEmails: opt(env, 'COCKPIT_DOC_SHARE_EMAILS').split(',').map((s) => s.trim()).filter(Boolean),
   }
 }
 
