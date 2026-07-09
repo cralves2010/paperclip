@@ -75,6 +75,16 @@ export function lastCommentTurnByTask(comments: Comment[], derekId: string, clau
 }
 
 /**
+ * True if `userId` (matched by id substring in the free-text author) authored ANY
+ * comment on `taskNum`. Gates the Derek "your move" ping to genuine replies in a
+ * thread he is part of: a fresh Claudio note on a task Derek never touched is a
+ * private note, not a hand-off, and must not ping him.
+ */
+export function taskHasCommentFrom(comments: Comment[], taskNum: string, userId: string): boolean {
+  return comments.some((c) => c.taskNum === taskNum && (c.author ?? '').includes(userId))
+}
+
+/**
  * Diff the current board against the user's last snapshot → the deltas worth a
  * "since you were here" mention. Materiality tiers: a status move INTO a
  * review/decision/shipped state, a delivery gaining its link, a brand-new task,

@@ -2,7 +2,7 @@ import type { App } from '@slack/bolt'
 import type { Config } from './config.js'
 import { buildPrivateView, isAllowed } from './allowlist.js'
 import { getComments, getState, getTasks, invalidate, lastSyncAt, setState } from './state.js'
-import { buildSnapshot, diffSnapshot, lastCommentTurnByTask, readWatermark, writeWatermark, type CommentTurn, type Delta } from './cockpit-state.js'
+import { buildSnapshot, diffSnapshot, lastCommentTurnByTask, taskHasCommentFrom, readWatermark, writeWatermark, type CommentTurn, type Delta } from './cockpit-state.js'
 import { commentCountByTask } from './sheets.js'
 import { appendComment, createTask, writeStatus } from './sheets-write.js'
 import { dmClaudio, dmUser, createDmText, replyToDerekDmText } from './notify.js'
@@ -26,7 +26,7 @@ import {
   parseCommentMetadata,
   validateComment,
 } from './views/actModals.js'
-import type { BoardSort, StatusFilter, Task, ViewState } from './model.js'
+import type { BoardSort, Comment, StatusFilter, Task, ViewState } from './model.js'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -401,9 +401,11 @@ export function registerHandlers(app: App, cfg: Config): void {
     // Resolve the task once — shared by the confirm modal (for the full
     // `COMPANY-N` ref) and the best-effort DM below.
     let task: Task | undefined
+    let comments: Comment[] = []
     try {
-      const tasks = await getTasks(cfg)
+      const [tasks, allComments] = await Promise.all([getTasks(cfg), getComments(cfg)])
       task = tasks.find((t) => t.taskNum === taskNum)
+      comments = allComments
     } catch (err) {
       logErr('comment_submit.lookup', err)
     }
@@ -436,13 +438,17 @@ export function registerHandlers(app: App, cfg: Config): void {
     try {
       const authorId = body?.user?.id ?? ''
       if (authorId === cfg.notifyUserId) {
-        // Claudio → Derek half of the two-way loop. dmUser with Derek's explicit
-        // id (additive), never a repoint of notifyUserId.
-        await dmUser(
-          client,
-          DEREK_USER_ID,
-          replyToDerekDmText({ sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', text: text.trim() }),
-        )
+        // Claudio → Derek half of the two-way loop, GATED: only ping Derek when the
+        // task already carries a Derek comment (a genuine reply in HIS thread). A
+        // fresh Claudio note on a task Derek never touched is a private note, not a
+        // hand-off. dmUser with Derek's explicit id (additive), never a repoint.
+        if (taskHasCommentFrom(comments, taskNum, DEREK_USER_ID)) {
+          await dmUser(
+            client,
+            DEREK_USER_ID,
+            replyToDerekDmText({ sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', text: text.trim() }),
+          )
+        }
       } else {
         const base = { sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', author, text: text.trim() }
         const dm = await classifyAndCompose(cfg, { authorId, base, task, prior: [] })

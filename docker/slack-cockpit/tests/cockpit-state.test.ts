@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { buildSnapshot, diffSnapshot, isNewSince, lastCommentTurnByTask, parseWatermark, resolveAnchor, type Snapshot } from '../src/cockpit-state.js'
+import { buildSnapshot, diffSnapshot, isNewSince, lastCommentTurnByTask, parseWatermark, resolveAnchor, taskHasCommentFrom, type Snapshot } from '../src/cockpit-state.js'
 import type { Comment, Task } from '../src/model.js'
 
 const DEREK = 'U08APFXGJ4U'
@@ -66,6 +66,16 @@ test('lastCommentTurnByTask: the LATEST comment author per task maps to derek/cl
   expect(m.get('1')).toBe('claudio')
   expect(m.get('2')).toBe('derek')
   expect(m.get('3')).toBe('other')
+})
+
+test('taskHasCommentFrom: gates the Derek ping to threads he is actually part of', () => {
+  const comments = [cmt('1', `@derek (${DEREK})`), cmt('1', `@claudio (${CLAUDIO})`), cmt('2', `@claudio (${CLAUDIO})`)]
+  // #1 has a Derek comment → a Claudio reply there is a genuine hand-off.
+  expect(taskHasCommentFrom(comments, '1', DEREK)).toBe(true)
+  // #2 is Claudio-only (a private note thread) → no Derek to hand off to.
+  expect(taskHasCommentFrom(comments, '2', DEREK)).toBe(false)
+  // #3 has no comments at all.
+  expect(taskHasCommentFrom(comments, '3', DEREK)).toBe(false)
 })
 
 test('diffSnapshot: a new comment flags needsYou ONLY for the OTHER principal (turn hand-off)', () => {
