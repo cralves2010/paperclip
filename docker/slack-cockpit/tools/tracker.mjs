@@ -15,10 +15,15 @@
 //        ("is this ask already covered by a task?" against the LIVE sheet — dedup check for any skill)
 //   node tracker.mjs radar [--json]                        read-only: STATELESS neglect radar (verdict backlog,
 //        aging reviews/blocks, stale claims, missing links, comment backlog, unclaimed new, log pulse)
-//   node tracker.mjs create --claudio (--from-comment '#<t>@<ISO>' | --standalone)
+//   node tracker.mjs create --claudio (--from-comment '#<t>@<ISO>' | --from-slack '<chan>@<ts>' | --standalone)
 //        --business "<b>" --title "<t>" [--priority "<p>"] [--next "<sentence>"]   mint a new task (dup Task# = hard stop)
-//   node tracker.mjs comment-add <task#> --text "<t>" [--author "<machine>"]       machine back-link (self-stamps Seen)
+//   node tracker.mjs comment-add <task#> --text "<t>" [--author "<machine>"]       machine back-link (self-stamps Seen;
+//        [--allow-dup]                                                             same-task dup text/slack-token = no-op)
 //   node tracker.mjs mark-seen --key '#<t>@<ISO>' --state '<token>' [--force]      stamp a comment's Seen watermark
+//   node tracker.mjs state-get <key> [--json]                                      read one _CockpitState KV row (intake:*/followup:*)
+//   node tracker.mjs state-set <key> (--value '<s>' | --value-file <p>)            CAS upsert of ONE _CockpitState row
+//        [--if-value '<expected>' | --if-value-file <p> | --if-absent]             (namespace-guarded; sweep-lock and cockpit
+//        [--window cc-<slug>]                                                      userId rows unreachable through this path)
 //   node tracker.mjs sweep-lock acquire|release [--window cc-<slug>]               serialize concurrent sweeps
 //   node tracker.mjs claim <task#> --window cc-<slug> [--force]
 //   node tracker.mjs heartbeat <task#> --window cc-<slug>
@@ -265,7 +270,7 @@ if (!cmd || flags.help) {
   process.exit(0)
 }
 
-const needsWrite = ['init', 'claim', 'heartbeat', 'release', 'done', 'link', 'create', 'mark-seen', 'comment-add', 'sweep-lock'].includes(cmd)
+const needsWrite = ['init', 'claim', 'heartbeat', 'release', 'done', 'link', 'create', 'mark-seen', 'comment-add', 'sweep-lock', 'state-set'].includes(cmd)
 const sheets = await sheetsClient(needsWrite)
 const data = await load(sheets)
 
@@ -501,11 +506,30 @@ if (cmd === 'mark-seen') {
 if (cmd === 'comment-add') {
   // Append a MACHINE back-link comment, self-stamping its own col E terminal so it
   // never re-enters the sweep. Author must be a machine identity, never Derek/Claudio.
+  // IDEMPOTENT for crash/race retries (2026-07-09): if the same task already carries
+  // a comment with the same exact text — or the same Slack provenance token
+  // "(<chan>@<ts>)" — this is a NO-OP, so a re-confirmed checkpoint or a second
+  // window never double-posts into Derek's cockpit. --allow-dup bypasses.
   const taskN = pos[0]
   if (!taskN) die('comment-add needs a <task#>')
   const author = typeof flags.author === 'string' ? flags.author : 'Agent M42 (cc-sweep)'
   const text = typeof flags.text === 'string' ? flags.text : null
   if (!text) die(`comment-add needs --text "<t>"`)
+  if (flags['allow-dup'] !== true) {
+    const cmDup = await loadComments(sheets)
+    if (cmDup) {
+      const tokenM = text.match(/\(([CDG][A-Z0-9]{8,}@\d{10}\.\d{6})\)/)
+      for (let i = 1; i < cmDup.rows.length; i++) {
+        if (cmDup.cell(cmDup.rows[i], cmDup.iTask) !== String(taskN).trim()) continue
+        const prev = cmDup.cell(cmDup.rows[i], cmDup.iText)
+        if (prev === text.trim() || (tokenM && prev.includes(`(${tokenM[1]})`))) {
+          audit({ cmd: 'comment-add', taskNum: taskN, dedup: true })
+          console.log(`already back-linked on #${taskN} (dup ${tokenM ? 'slack token' : 'text'}) — no-op`)
+          process.exit(0)
+        }
+      }
+    }
+  }
   const seenStamp = `Skipped — machine back-link (${today()})`
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
@@ -519,6 +543,67 @@ if (cmd === 'comment-add') {
   process.exit(0)
 }
 
+if (cmd === 'state-get' || cmd === 'state-set') {
+  // Generic _CockpitState KV rows for durable machine state (2026-07-09):
+  // Slack-intake watermarks `intake:<channelId>` + consistency-guard suppressions
+  // `followup:changes`. Namespace-guarded: ONLY intake:* / followup:* — the
+  // sweep-lock row and the cockpit's userId rows are UNREACHABLE through this
+  // path. Row layout: A=key, B=value (string, usually JSON), C=updatedAt ISO,
+  // D=window. state-set locates the row by EXACT col-A match AT WRITE TIME,
+  // appends via INSERT_ROWS when absent (never overwrites neighbors), supports
+  // CAS via --if-value / --if-value-file / --if-absent, and echo-verifies the
+  // write so a row shift dies loudly. Only that one row's A:D is ever touched.
+  // PS 5.1 mangles quoted JSON on the command line — from PowerShell ALWAYS use
+  // --value-file and --if-value-file (scratchpad files), never inline JSON.
+  const key = pos[0]
+  if (!key) die(`${cmd} needs a <key>`)
+  if (!/^(intake|followup):[A-Za-z0-9._:-]{1,80}$/.test(key))
+    die(`key "${key}" outside the allowed namespaces (intake:* / followup:*) — sweep-lock and cockpit rows are off-limits`)
+  let sRows
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A1:D` })
+    sRows = res.data.values ?? []
+  } catch (err) {
+    if (/unable to parse range/i.test(String(err?.message ?? err))) die(`${STATE_TAB} tab missing — open the cockpit once to create it`)
+    throw err
+  }
+  const hits = []
+  for (let i = 0; i < sRows.length; i++) if (((sRows[i][0] ?? '') + '').trim() === key) hits.push(i)
+  if (hits.length > 1) die(`key "${key}" appears ${hits.length}× in ${STATE_TAB} — de-dup manually before continuing`)
+  const cur = hits.length ? ((sRows[hits[0]][1] ?? '') + '').trim() : null
+
+  if (cmd === 'state-get') {
+    if (flags.json === true) console.log(JSON.stringify({ key, value: cur, updatedAt: hits.length ? ((sRows[hits[0]][2] ?? '') + '').trim() : null }))
+    else console.log(cur === null ? `(absent) ${key}` : `${key} = ${cur}`)
+    audit({ cmd: 'state-get', key, absent: cur === null })
+    process.exit(0)
+  }
+
+  let value = typeof flags.value === 'string' ? flags.value : null
+  if (value === null && typeof flags['value-file'] === 'string') value = fs.readFileSync(flags['value-file'], 'utf8').replace(/\r?\n$/, '')
+  if (value === null) die(`state-set needs --value '<string>' or --value-file <path>`)
+  if (value.length > 40000) die('--value too long (>40k chars — sheet cell cap is 50k)')
+  let ifValue = typeof flags['if-value'] === 'string' ? flags['if-value'] : null
+  if (ifValue === null && typeof flags['if-value-file'] === 'string') ifValue = fs.readFileSync(flags['if-value-file'], 'utf8').replace(/\r?\n$/, '')
+  if (flags['if-absent'] === true && hits.length) die(`CAS conflict: "${key}" already exists — re-read (state-get) and retry with --if-value-file`)
+  if (ifValue !== null && cur !== ifValue.trim())
+    die(`CAS conflict on "${key}":\n  expected: ${ifValue === null ? '(absent)' : ifValue.trim().slice(0, 200)}\n  actual:   ${cur === null ? '(absent)' : cur.slice(0, 200)}\n— another window advanced this state; re-read (state-get) and reconcile before retrying`)
+  const sWin = typeof flags.window === 'string' ? flags.window : anonWindow()
+  const rowVals = [[key, value, nowIso(), sWin]]
+  if (hits.length === 0) {
+    await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A1:D1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', requestBody: { values: rowVals } })
+  } else {
+    await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${hits[0] + 1}:D${hits[0] + 1}`, valueInputOption: 'RAW', requestBody: { values: rowVals } })
+  }
+  const chk = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A1:B` })
+  const back = (chk.data.values ?? []).filter((r) => ((r[0] ?? '') + '').trim() === key)
+  if (back.length !== 1 || ((back[0][1] ?? '') + '').trim() !== value.trim())
+    die(`state-set verify failed for "${key}" (ROW SHIFT or concurrent edit) — check ${STATE_TAB} manually`)
+  audit({ cmd: 'state-set', key, cas: ifValue !== null || flags['if-absent'] === true, window: sWin, bytes: value.length })
+  console.log(`✓ ${key} set (${value.length} chars)${ifValue !== null ? ' [CAS ok]' : ''}`)
+  process.exit(0)
+}
+
 if (cmd === 'create') {
   // Mint a NEW task row. Claudio-only. Requires --from-comment (provenance anchor,
   // enables crash-safe idempotency) unless --standalone. Post-append duplicate-Task#
@@ -529,8 +614,10 @@ if (cmd === 'create') {
   // fresh data — the boot-time `data` is stale by the time the lock is ours.
   if (flags.claudio !== true) die('create requires --claudio (Claudio-only, per contract)')
   const fromComment = typeof flags['from-comment'] === 'string' ? flags['from-comment'] : null
+  const fromSlack = typeof flags['from-slack'] === 'string' ? flags['from-slack'] : null
   const standalone = flags.standalone === true
-  if (!fromComment && !standalone) die(`create requires --from-comment '#<task>@<ISO>' (or --standalone for a genuine standalone task)`)
+  if (!fromComment && !fromSlack && !standalone) die(`create requires --from-comment '#<task>@<ISO>' or --from-slack '<channelId>@<message ts>' (or --standalone for a genuine standalone task)`)
+  if (fromSlack && !/^[CDG][A-Z0-9]{8,}@\d{10}\.\d{6}$/.test(fromSlack)) die(`bad --from-slack (expected '<channelId>@<epoch.6dp message ts>'): ${fromSlack}`)
   const business = typeof flags.business === 'string' ? flags.business : null
   const title = typeof flags.title === 'string' ? flags.title : null
   if (!business) die('create needs --business "<b>"')
@@ -553,7 +640,7 @@ if (cmd === 'create') {
   const priorityCol = idxOf('Priority Tier', 'Priority')
 
   // Idempotency: if this comment already spawned a task, no-op.
-  const anchor = fromComment ? `[from comment ${fromComment}]` : ''
+  const anchor = fromComment ? `[from comment ${fromComment}]` : fromSlack ? `[from slack ${fromSlack}]` : ''
   if (anchor && fresh.cols.next >= 0) {
     for (let r = 1; r < fresh.rows.length; r++) {
       if (((fresh.rows[r][fresh.cols.next] ?? '') + '').includes(anchor)) {
@@ -592,9 +679,9 @@ if (cmd === 'create') {
   const dupes = vRows.slice(1).filter((rr) => ((rr[vTaskCol] ?? '') + '').trim() === String(nextNum))
   await releaseSweepLock(sheets) // duplicate scan done — release before the verdict so a HARD STOP never strands the lock
   if (dupes.length !== 1) die(`HARD STOP: Task #${nextNum} appears ${dupes.length}× after append — DE-DUP manually before continuing`)
-  audit({ cmd: 'create', taskNum: nextNum, business, provenance: fromComment || 'standalone', window: createWin })
+  audit({ cmd: 'create', taskNum: nextNum, business, provenance: fromComment || (fromSlack ? `slack ${fromSlack}` : 'standalone'), window: createWin })
   console.log(`✓ created ${business}-${nextNum} — Not Started (Owner: Agent M42)`)
-  if (fromComment) console.log(`  anchored: ${anchor}`)
+  if (anchor) console.log(`  anchored: ${anchor}`)
   process.exit(0)
 }
 
@@ -799,7 +886,7 @@ if (cmd === 'radar') {
   // h. 📊 log pulse — movement signal from the local audit log tail (~200 lines)
   if (fs.existsSync(LOG)) {
     const lines = fs.readFileSync(LOG, 'utf8').split(/\r?\n/).filter(Boolean).slice(-200)
-    const MUTATIONS = new Set(['init', 'claim', 'heartbeat', 'release', 'done', 'link', 'create', 'mark-seen', 'comment-add', 'sweep-lock'])
+    const MUTATIONS = new Set(['init', 'claim', 'heartbeat', 'release', 'done', 'link', 'create', 'mark-seen', 'comment-add', 'sweep-lock', 'state-set'])
     const last24h = {}
     const last48h = {}
     for (const ln of lines) {
@@ -941,6 +1028,7 @@ if (cmd === 'claim') {
   await verifyRow(sheets, data, r, taskNum, win)
   audit({ cmd, taskNum, window: win, forced: !!flags.force, prevHolder: holder || null })
   console.log(`✓ claimed #${taskNum} for ${win} (status: In Progress)`)
+  console.log(`  🧭 before working: run the consistency gate — m42-tracker-protocol step 3 (canonical: m42-comment-sweep §🧭)`)
   process.exit(0)
 }
 
