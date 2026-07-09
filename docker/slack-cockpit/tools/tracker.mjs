@@ -11,6 +11,10 @@
 //   node tracker.mjs comments <task#>                      read-only: list Comments-tab entries for a task
 //   node tracker.mjs comment-sweep [--all] [--json]        read-only: unprocessed comments (Derek by default)
 //        [--include-seen] [--task <N>]                     joined to their parent task, for /m42-comment-sweep
+//   node tracker.mjs match --text "<message>" [--json] [--top N]   read-only: fuzzy ask→Task# retrieval
+//        ("is this ask already covered by a task?" against the LIVE sheet — dedup check for any skill)
+//   node tracker.mjs radar [--json]                        read-only: STATELESS neglect radar (verdict backlog,
+//        aging reviews/blocks, stale claims, missing links, comment backlog, unclaimed new, log pulse)
 //   node tracker.mjs create --claudio (--from-comment '#<t>@<ISO>' | --standalone)
 //        --business "<b>" --title "<t>" [--priority "<p>"] [--next "<sentence>"]   mint a new task (dup Task# = hard stop)
 //   node tracker.mjs comment-add <task#> --text "<t>" [--author "<machine>"]       machine back-link (self-stamps Seen)
@@ -226,10 +230,38 @@ async function releaseSweepLock(sheets) {
     await sheets.spreadsheets.values.update({ spreadsheetId: SHEET_ID, range: `'${STATE_TAB}'!A${lockRow + 1}:C${lockRow + 1}`, valueInputOption: 'RAW', requestBody: { values: [['', '', '']] } })
 }
 
+// ---- tolerant Comments-tab loader (shared by the read-only match/radar) ----
+// Absent tab is a NORMAL state (returns null) — same contract as `comments`:
+// only "unable to parse range" means missing; anything else dies loudly so an
+// outage is never mistaken for an empty tab.
+async function loadComments(sheets) {
+  let cRows
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'Comments'!A1:F` })
+    cRows = res.data.values ?? []
+  } catch (err) {
+    const msg = String(err?.message ?? err)
+    if (!/unable to parse range/i.test(msg)) die(`comments read failed: ${msg}`)
+    return null
+  }
+  const h = (cRows[0] ?? []).map((x) => (x ?? '').trim())
+  const n = (s) => s.replace(/\s+/g, '').toLowerCase()
+  const ix = (...names) => { for (const nm of names) { const i = h.findIndex((x) => n(x) === n(nm)); if (i >= 0) return i } return -1 }
+  return {
+    rows: cRows,
+    iTs: ix('Timestamp', 'Time'),
+    iTask: ix('Task #', 'Task#', 'Task'),
+    iAuthor: ix('Author'),
+    iText: ix('Comment', 'Text'),
+    iSeen: ix('Seen'),
+    cell: (row, i) => (i >= 0 ? ((row?.[i] ?? '') + '').trim() : ''),
+  }
+}
+
 const { cmd, pos, flags } = parseArgs(process.argv.slice(2))
 
 if (!cmd || flags.help) {
-  console.log('usage: tracker.mjs init|claims|row|comments|comment-sweep|create|comment-add|mark-seen|sweep-lock|claim|heartbeat|release|done|link  (see file header)')
+  console.log('usage: tracker.mjs init|claims|row|comments|comment-sweep|match|radar|create|comment-add|mark-seen|sweep-lock|claim|heartbeat|release|done|link  (see file header)')
   process.exit(0)
 }
 
@@ -563,6 +595,266 @@ if (cmd === 'create') {
   audit({ cmd: 'create', taskNum: nextNum, business, provenance: fromComment || 'standalone', window: createWin })
   console.log(`✓ created ${business}-${nextNum} — Not Started (Owner: Agent M42)`)
   if (fromComment) console.log(`  anchored: ${anchor}`)
+  process.exit(0)
+}
+
+if (cmd === 'match') {
+  // READ-ONLY fuzzy ask→Task# retrieval: "is this ask already covered by a task?"
+  // against the LIVE sheet. Pure lexical scoring (no new deps, no state): token
+  // overlap with title (w3) / business incl. company aliases (w2) / next action
+  // (w1.5) / recent comment text (w1), plus a literal Task# mention in the ask
+  // ("#42" / "JRS-42", w10 — near-certain). Weak scores are surfaced WITH a
+  // caveat — they are NOT dedup guarantees. Exits 0 always: zero matches just
+  // means "likely a NEW ask", which is a valid answer, not an error.
+  const text = typeof flags.text === 'string' ? flags.text : null
+  if (!text) die(`match needs --text "<message>"`)
+  const topN = Math.max(1, parseInt(flags.top, 10) || 5)
+  const asJson = flags.json === true
+
+  // Small EN+PT stopword list — asks arrive in either language.
+  const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'at', 'is', 'are', 'was', 'be', 'do', 'does', 'we', 'i', 'you', 'it', 'this', 'that', 'de', 'da', 'das', 'dos', 'o', 'as', 'os', 'e', 'ou', 'um', 'uma', 'para', 'pra', 'em', 'no', 'na', 'nos', 'nas', 'que', 'com', 'por', 'se', 'ele', 'ela', 'isso'])
+  const fold = (s) => ((s ?? '') + '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')
+  const toks = (s) => new Set(fold(s).split(/[^a-z0-9]+/).filter((t) => t && !STOP.has(t)))
+  const overlap = (a, b) => { let n = 0; for (const t of a) if (b.has(t)) n++; return n }
+
+  const textToks = toks(text)
+  // Literal Task# mentions ("#42", "JRS-42") — near-certain signal.
+  const litNums = new Set()
+  for (const m of text.matchAll(/#(\d+)\b/g)) litNums.add(m[1])
+  for (const m of text.matchAll(/\b[A-Za-z]\w*-(\d+)\b/g)) litNums.add(m[1])
+
+  // Company aliases: a group hits when BOTH the ask and the row's Business /
+  // Section contain one of its tokens (however each side spells the company).
+  const ALIAS_GROUPS = [
+    ['jrs'], ['brightly'], ['bam'], ['tmt'], ['immersivity'], ['entourage'],
+    ['2020', 'theory', '2020theory'],
+    ['3t', '3talliance', 'alliance'],
+    ['m42', 'umbrella', 'holdings'],
+  ]
+
+  // Recent comment text (last 3 per task) strengthens matching; tab may be absent.
+  const cm = await loadComments(sheets)
+  const recentComments = new Map() // taskNum -> [text, ...] (newest first, ≤3)
+  if (cm) {
+    for (let i = cm.rows.length - 1; i >= 1; i--) {
+      const tn = cm.cell(cm.rows[i], cm.iTask)
+      if (!tn) continue
+      const list = recentComments.get(tn) ?? []
+      if (list.length >= 3) continue
+      list.push(cm.cell(cm.rows[i], cm.iText))
+      recentComments.set(tn, list)
+    }
+  }
+
+  const tcell = (r, i) => (i >= 0 ? ((data.rows[r][i] ?? '') + '').trim() : '')
+  const clamp = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+  const scored = []
+  for (let r = 1; r < data.rows.length; r++) {
+    const tn = tcell(r, data.cols.task)
+    if (!tn) continue
+    const title = tcell(r, data.cols.title)
+    const business = tcell(r, data.cols.business)
+    let score = 0
+    score += 3 * overlap(toks(title), textToks)
+    const bizToks = toks(business)
+    const bizHit =
+      overlap(bizToks, textToks) > 0 ||
+      ALIAS_GROUPS.some((g) => g.some((t) => bizToks.has(t)) && g.some((t) => textToks.has(t)))
+    if (bizHit) score += 2
+    score += 1.5 * overlap(toks(tcell(r, data.cols.next)), textToks)
+    const cList = recentComments.get(tn)
+    if (cList) score += overlap(toks(cList.join(' ')), textToks)
+    const tnDigits = tn.replace(/[^\d]/g, '')
+    if (tnDigits && litNums.has(tnDigits)) score += 10
+    if (score <= 0) continue
+    scored.push({
+      score: Math.round(score * 10) / 10,
+      strength: score >= 8 ? 'strong' : score >= 4 ? 'medium' : 'weak',
+      taskNum: tn,
+      business,
+      title: clamp(title, 80),
+      status: tcell(r, data.cols.status),
+      claimedBy: data.cols.claimedBy >= 0 ? tcell(r, data.cols.claimedBy) : '',
+    })
+  }
+  scored.sort((a, b) => b.score - a.score)
+  const top = scored.slice(0, topN)
+  audit({ cmd, matched: top.length, top: top[0]?.taskNum ?? null })
+
+  if (asJson) {
+    console.log(JSON.stringify(top, null, 2))
+    process.exit(0)
+  }
+  if (top.length === 0) {
+    console.log('no plausible match — likely a NEW ask')
+    process.exit(0)
+  }
+  for (const it of top)
+    console.log(
+      `${String(it.score).padStart(5)}  ${it.strength.padEnd(6)}  #${it.taskNum} [${it.business}] ${it.title} · ${it.status || '—'}${it.claimedBy ? ` · claimed by ${it.claimedBy}` : ''}`
+    )
+  if (top.some((it) => it.strength === 'weak'))
+    console.log('⚠ weak matches are NOT dedup guarantees — verify the row before assuming the ask is covered')
+  process.exit(0)
+}
+
+if (cmd === 'radar') {
+  // READ-ONLY, STATELESS neglect radar — recomputed fresh every run, no state
+  // stored anywhere. Surfaces what nothing else watches, starting with the
+  // "Changes requested" verdict backlog (the currently-BLIND channel: the
+  // cockpit writes it, nothing reads it). That bucket is flagged EVERY run and
+  // NEVER capped, until the row is claimed or its status changes. Also: aging
+  // reviews/blocks, stale claims, delivered rows without a link, comment
+  // backlog, unclaimed new tasks, and a movement pulse from the local audit
+  // log. Each human row ends with the exact next command to run.
+  const asJson = flags.json === true
+  const tcell = (r, i) => (i >= 0 ? ((data.rows[r][i] ?? '') + '').trim() : '')
+  const clamp = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+  const dayMs = (s) => {
+    // Col N contract is YYYY-MM-DD; anything else (blank/garbage) is unparseable.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null
+    const t = Date.parse(s + 'T00:00:00Z')
+    return Number.isNaN(t) ? null : t
+  }
+  const ageDays = (t) => Math.floor((Date.now() - t) / 86400000)
+  const DEREK_ID = 'U08APFXGJ4U'
+
+  const S = { changesRequested: [], agingReviews: [], blockedAging: [], staleClaims: [], linkMissing: [], commentBacklog: null, unclaimedNew: [], logPulse: null }
+  const noDate = new Set() // tracker rows an age bucket wanted but whose col N was unparseable
+
+  for (let r = 1; r < data.rows.length; r++) {
+    const tn = tcell(r, data.cols.task)
+    if (!tn) continue
+    const status = tcell(r, data.cols.status)
+    const claimedBy = data.cols.claimedBy >= 0 ? tcell(r, data.cols.claimedBy) : ''
+    const business = tcell(r, data.cols.business)
+    const title = clamp(tcell(r, data.cols.title), 80)
+    const upd = dayMs(tcell(r, data.cols.updated))
+
+    // a. 🟣 verdict backlog — flagged until claimed or status changed; never capped.
+    if (/^changes requested/i.test(status) && !claimedBy)
+      S.changesRequested.push({ taskNum: tn, business, title, status, next: `node tracker.mjs claim ${tn} --window cc-<you>` })
+
+    // b. ⏳ delivered, waiting on Derek's review > 3 days
+    if (status === 'Delivered — awaiting Derek review') {
+      if (upd === null) noDate.add(r)
+      else if (ageDays(upd) > 3) S.agingReviews.push({ taskNum: tn, business, title, ageDays: ageDays(upd), next: 'draft a nudge for Derek (send via Claudio)' })
+    }
+
+    // c. 🔴 blocked > 5 days
+    if (/^blocked —/i.test(status)) {
+      if (upd === null) noDate.add(r)
+      else if (ageDays(upd) > 5) S.blockedAging.push({ taskNum: tn, business, title, status, ageDays: ageDays(upd), next: `node tracker.mjs row ${tn}  (re-check the blocker; escalate to Claudio)` })
+    }
+
+    // d. 🟠 stale claims (> STALE_HOURS)
+    if (claimedBy) {
+      const age = claimAge(data.cols.claimTs >= 0 ? tcell(r, data.cols.claimTs) : '')
+      if (age > STALE_HOURS)
+        S.staleClaims.push({ taskNum: tn, holder: claimedBy, ageHours: age === Infinity ? null : Math.round(age * 10) / 10, title, next: 'release or takeover per protocol (ask Claudio before any --force)' })
+    }
+
+    // e. ⚠️ delivered/done without a deliverable link
+    if (/^(done$|delivered)/i.test(status)) {
+      const link = data.cols.link >= 0 ? tcell(r, data.cols.link) : ''
+      if (!link) S.linkMissing.push({ taskNum: tn, business, title, status, next: `node tracker.mjs link ${tn} --url <deliverable-url>` })
+    }
+
+    // g. 🆕 recently minted (col N ≤ 7 days), nobody picked it up
+    if (/^not started$/i.test(status) && !claimedBy) {
+      if (upd === null) noDate.add(r)
+      else if (ageDays(upd) <= 7) S.unclaimedNew.push({ taskNum: tn, business, title, ageDays: ageDays(upd), next: `node tracker.mjs claim ${tn} --window cc-<you>` })
+    }
+  }
+
+  // f. 💬 comment backlog (tab may be absent — that is a normal state)
+  const cm = await loadComments(sheets)
+  if (cm) {
+    let unseenDerek = 0
+    let unseenOthers = 0
+    let deferred = 0
+    const awaitingOld = []
+    for (let i = 1; i < cm.rows.length; i++) {
+      const row = cm.rows[i]
+      const tn = cm.cell(row, cm.iTask)
+      if (!tn) continue
+      const seen = cm.cell(row, cm.iSeen)
+      if (!seen) {
+        if (cm.cell(row, cm.iAuthor).includes(DEREK_ID)) unseenDerek++
+        else unseenOthers++
+        continue
+      }
+      if (/^deferred —/i.test(seen)) deferred++
+      else if (/^awaiting derek/i.test(seen)) {
+        const dm = /(\d{4}-\d{2}-\d{2})/.exec(seen)
+        const t = dm ? dayMs(dm[1]) : null
+        if (t !== null && ageDays(t) > 3) awaitingOld.push({ key: `#${tn}@${cm.cell(row, cm.iTs)}`, ageDays: ageDays(t) })
+      }
+    }
+    S.commentBacklog = { tabAbsent: false, unseenDerek, unseenOthers, deferred, awaitingDerekOver3d: awaitingOld, next: 'run the /m42-comment-sweep skill' }
+  } else {
+    S.commentBacklog = { tabAbsent: true, unseenDerek: 0, unseenOthers: 0, deferred: 0, awaitingDerekOver3d: [], next: 'run the /m42-comment-sweep skill' }
+  }
+
+  // h. 📊 log pulse — movement signal from the local audit log tail (~200 lines)
+  if (fs.existsSync(LOG)) {
+    const lines = fs.readFileSync(LOG, 'utf8').split(/\r?\n/).filter(Boolean).slice(-200)
+    const MUTATIONS = new Set(['init', 'claim', 'heartbeat', 'release', 'done', 'link', 'create', 'mark-seen', 'comment-add', 'sweep-lock'])
+    const last24h = {}
+    const last48h = {}
+    for (const ln of lines) {
+      let e
+      try { e = JSON.parse(ln) } catch { continue }
+      if (!e || !MUTATIONS.has(e.cmd)) continue
+      const t = Date.parse(e.at)
+      if (Number.isNaN(t)) continue
+      const h = (Date.now() - t) / 3.6e6
+      if (h <= 48) {
+        last48h[e.cmd] = (last48h[e.cmd] ?? 0) + 1
+        if (h <= 24) last24h[e.cmd] = (last24h[e.cmd] ?? 0) + 1
+      }
+    }
+    S.logPulse = { found: true, last24h, last48h }
+  } else {
+    S.logPulse = { found: false }
+  }
+
+  const cb = S.commentBacklog
+  const cbCount = cb.unseenDerek + cb.unseenOthers + cb.deferred + cb.awaitingDerekOver3d.length
+  const total = S.changesRequested.length + S.agingReviews.length + S.blockedAging.length + S.staleClaims.length + S.linkMissing.length + cbCount + S.unclaimedNew.length
+  audit({ cmd, total })
+
+  if (asJson) {
+    console.log(JSON.stringify({ generatedAt: nowIso(), sections: S, rowsWithUnreadableDate: noDate.size, total }, null, 2))
+    process.exit(0)
+  }
+
+  console.log(`RADAR ${today()} · ${total} itens`)
+  const section = (emoji, name, items, fmt) => {
+    if (!items.length) return
+    console.log(`\n${emoji} ${name} (${items.length})`)
+    for (const it of items) console.log(`  ${fmt(it)}`)
+  }
+  section('🟣', 'CHANGES REQUESTED — verdict backlog (never capped)', S.changesRequested, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.status}  →  ${it.next}`)
+  section('⏳', 'AGING REVIEWS (delivered > 3d, no verdict)', S.agingReviews, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.ageDays}d waiting  →  ${it.next}`)
+  section('🔴', 'BLOCKED > 5d', S.blockedAging, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.status} · ${it.ageDays}d  →  ${it.next}`)
+  section('🟠', `STALE CLAIMS (> ${STALE_HOURS}h)`, S.staleClaims, (it) => `#${it.taskNum} held by ${it.holder} · ${it.ageHours === null ? 'unknown age' : it.ageHours + 'h'} · ${it.title}  →  ${it.next}`)
+  section('⚠️', 'LINK MISSING (delivered/done, no deliverable link)', S.linkMissing, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.status}  →  ${it.next}`)
+  if (cbCount > 0) {
+    console.log(`\n💬 COMMENT BACKLOG (${cbCount})`)
+    if (cb.unseenDerek + cb.unseenOthers > 0) console.log(`  unseen: ${cb.unseenDerek} from Derek, ${cb.unseenOthers} from others  →  ${cb.next}`)
+    if (cb.deferred > 0) console.log(`  deferred: ${cb.deferred}  →  ${cb.next}`)
+    for (const a of cb.awaitingDerekOver3d) console.log(`  awaiting Derek > 3d: ${a.key} (${a.ageDays}d)  →  draft a nudge for Derek (send via Claudio)`)
+  }
+  section('🆕', 'UNCLAIMED NEW (minted ≤ 7d, nobody picked up)', S.unclaimedNew, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.ageDays}d old  →  ${it.next}`)
+  const fmtPulse = (o) => Object.entries(o).map(([k, v]) => `${k}×${v}`).join(', ') || 'none'
+  console.log(
+    S.logPulse.found
+      ? `\n📊 LOG PULSE — 24h: ${fmtPulse(S.logPulse.last24h)} · 48h: ${fmtPulse(S.logPulse.last48h)}`
+      : `\n📊 LOG PULSE — tracker-log absent (no movement signal)`
+  )
+  if (noDate.size) console.log(`\n(${noDate.size} rows sem data legível — skipped from age buckets)`)
+  console.log(`\nTOTAL: ${total} itens`)
   process.exit(0)
 }
 
