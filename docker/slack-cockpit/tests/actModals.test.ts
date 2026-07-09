@@ -8,7 +8,7 @@ import {
   parseCommentMetadata,
   validateComment,
 } from '../src/views/actModals.js'
-import { commentDmText, createDmText } from '../src/notify.js'
+import { commentDmText, createDmText, replyToDerekDmText } from '../src/notify.js'
 import type { Task } from '../src/model.js'
 
 const t = (o: Partial<Task>): Task => ({
@@ -100,4 +100,12 @@ test('commentDmText / createDmText produce locked copy + spreadsheet link', () =
   expect(cr).toContain('➕ New task #31')
   expect(cr).toContain('(JRS, P1)')
   expect(cr).toContain('https://docs.google.com/spreadsheets/d/SID/edit')
+})
+
+test('replyToDerekDmText tells Derek a reply landed and it is his move, in full', () => {
+  const out = replyToDerekDmText({ sheetId: 'SID', taskNum: '41', company: 'JRS', title: 'School', text: 'here is my full answer to you' })
+  expect(out).toContain('#41')
+  expect(out).toContain('your move')
+  expect(out).toContain('here is my full answer to you')
+  expect(out).toContain('https://docs.google.com/spreadsheets/d/SID/edit')
 })

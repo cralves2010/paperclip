@@ -2,10 +2,10 @@ import type { App } from '@slack/bolt'
 import type { Config } from './config.js'
 import { buildPrivateView, isAllowed } from './allowlist.js'
 import { getComments, getState, getTasks, invalidate, lastSyncAt, setState } from './state.js'
-import { buildSnapshot, diffSnapshot, readWatermark, writeWatermark, type Delta } from './cockpit-state.js'
+import { buildSnapshot, diffSnapshot, lastCommentTurnByTask, readWatermark, writeWatermark, type CommentTurn, type Delta } from './cockpit-state.js'
 import { commentCountByTask } from './sheets.js'
 import { appendComment, createTask, writeStatus } from './sheets-write.js'
-import { dmClaudio, createDmText } from './notify.js'
+import { dmClaudio, dmUser, createDmText, replyToDerekDmText } from './notify.js'
 import { classifyAndCompose } from './classify.js'
 import { plainInput, section, type ModalView } from './blocks.js'
 import { clamp, taskRef } from './text.js'
@@ -71,7 +71,11 @@ async function publishForUser(client: any, cfg: Config, userId: string, trackVis
     if (trackVisit && !cfg.demo) {
       try {
         const wm = await readWatermark(cfg, userId)
-        deltas = diffSnapshot(tasks, commentCounts, wm?.snapshot ?? {})
+        // Recipient-aware "new comment" hand-off: a reply flags "your move" only
+        // for the OTHER principal, decided from the latest comment author vs viewer.
+        const viewer: CommentTurn = userId === DEREK_USER_ID ? 'derek' : userId === cfg.notifyUserId ? 'claudio' : 'other'
+        const lastAuthorByTask = lastCommentTurnByTask(comments, DEREK_USER_ID, cfg.notifyUserId)
+        deltas = diffSnapshot(tasks, commentCounts, wm?.snapshot ?? {}, { lastAuthorByTask, viewer })
         lastSeenTs = wm?.lastSeenTs || undefined
       } catch (e) {
         logErr('watermark.read', e) // safe-degrade: just no digest this render
@@ -425,14 +429,25 @@ export function registerHandlers(app: App, cfg: Config): void {
     } catch (err) {
       logErr('comment_submit.refresh', err)
     }
-    // Best-effort DM to Claudio (never rolls back the write). Enriched with a
-    // classification when COCKPIT_CLASSIFY is on; falls back to the raw DM
-    // otherwise or on any classifier failure (the notification never depends on
-    // the LLM succeeding). Runs post-ack, so it can't touch the 3s deadline.
+    // Best-effort recipient-aware DM (never rolls back the write; runs post-ack so
+    // it can't touch the 3s deadline). Claudio's reply notifies DEREK ("your move");
+    // Derek's comment notifies Claudio, enriched when COCKPIT_CLASSIFY is on (falls
+    // back to the raw DM on any classifier failure — the notice never depends on the LLM).
     try {
-      const base = { sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', author, text: text.trim() }
-      const dm = await classifyAndCompose(cfg, { authorId: body?.user?.id ?? '', base, task, prior: [] })
-      await dmClaudio(client, cfg, dm)
+      const authorId = body?.user?.id ?? ''
+      if (authorId === cfg.notifyUserId) {
+        // Claudio → Derek half of the two-way loop. dmUser with Derek's explicit
+        // id (additive), never a repoint of notifyUserId.
+        await dmUser(
+          client,
+          DEREK_USER_ID,
+          replyToDerekDmText({ sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', text: text.trim() }),
+        )
+      } else {
+        const base = { sheetId: cfg.sheetId, taskNum, company: task?.company ?? '—', title: task?.title ?? '—', author, text: text.trim() }
+        const dm = await classifyAndCompose(cfg, { authorId, base, task, prior: [] })
+        await dmClaudio(client, cfg, dm)
+      }
     } catch (err) {
       logErr('comment_submit.dm', err)
     }

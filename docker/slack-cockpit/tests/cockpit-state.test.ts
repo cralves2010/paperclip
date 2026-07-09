@@ -1,6 +1,10 @@
 import { expect, test } from 'vitest'
-import { buildSnapshot, diffSnapshot, isNewSince, parseWatermark, resolveAnchor, type Snapshot } from '../src/cockpit-state.js'
-import type { Task } from '../src/model.js'
+import { buildSnapshot, diffSnapshot, isNewSince, lastCommentTurnByTask, parseWatermark, resolveAnchor, type Snapshot } from '../src/cockpit-state.js'
+import type { Comment, Task } from '../src/model.js'
+
+const DEREK = 'U08APFXGJ4U'
+const CLAUDIO = 'U08C8QTNBJ9'
+const cmt = (taskNum: string, author: string): Comment => ({ timestamp: '', taskNum, author, text: 'x', seen: '' })
 
 const t = (o: Partial<Task>): Task => ({
   taskNum: '1',
@@ -49,6 +53,36 @@ test('diffSnapshot: a delivery gaining its link, a new task, and new comments ea
   expect(byNum['9']).toBe('new_task')
   // the new needs_you task flags needsYou
   expect(d.find((x) => x.taskNum === '9')?.needsYou).toBe(true)
+})
+
+test('lastCommentTurnByTask: the LATEST comment author per task maps to derek/claudio/other', () => {
+  const comments = [
+    cmt('1', `@derek (${DEREK})`),
+    cmt('1', `@claudio (${CLAUDIO})`), // latest on 1 → claudio
+    cmt('2', `@derek (${DEREK})`), // latest on 2 → derek
+    cmt('3', 'Agent M42 (cc-sweep)'), // machine → other
+  ]
+  const m = lastCommentTurnByTask(comments, DEREK, CLAUDIO)
+  expect(m.get('1')).toBe('claudio')
+  expect(m.get('2')).toBe('derek')
+  expect(m.get('3')).toBe('other')
+})
+
+test('diffSnapshot: a new comment flags needsYou ONLY for the OTHER principal (turn hand-off)', () => {
+  const snap: Snapshot = { '1': { s: 'in_progress', l: false, c: 1 } }
+  const tasks = [t({ taskNum: '1', status: 'in_progress' })]
+  const lastAuthorByTask = new Map([['1', 'claudio' as const]])
+  // Derek viewing Claudio's reply → his move.
+  const derekView = diffSnapshot(tasks, counts({ '1': 2 }), snap, { lastAuthorByTask, viewer: 'derek' })
+  expect(derekView.find((d) => d.taskNum === '1')).toMatchObject({ kind: 'new_comment', needsYou: true })
+  // Claudio viewing his OWN reply → not his move.
+  const claudioView = diffSnapshot(tasks, counts({ '1': 2 }), snap, { lastAuthorByTask, viewer: 'claudio' })
+  expect(claudioView.find((d) => d.taskNum === '1')?.needsYou).toBe(false)
+  // No turn info → backward-compatible false (existing callers unaffected).
+  expect(diffSnapshot(tasks, counts({ '1': 2 }), snap).find((d) => d.taskNum === '1')?.needsYou).toBe(false)
+  // A machine-authored last comment is never a hand-off.
+  const machine = new Map([['1', 'other' as const]])
+  expect(diffSnapshot(tasks, counts({ '1': 2 }), snap, { lastAuthorByTask: machine, viewer: 'derek' }).find((d) => d.taskNum === '1')?.needsYou).toBe(false)
 })
 
 test('resolveAnchor: first-ever visit → now (nothing new); a >30m gap freezes the anchor at the old lastSeen; an active session keeps it stable', () => {

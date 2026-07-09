@@ -54,14 +54,45 @@ export function buildSnapshot(tasks: Task[], commentCounts: Map<string, number>)
   return snap
 }
 
+/** Whose "move" a comment is — the two principals plus everyone/thing else. */
+export type CommentTurn = 'derek' | 'claudio' | 'other'
+
+/**
+ * The role of the LATEST comment author per task — used to decide whose "move" a
+ * new comment is. Comments arrive in append (chronological) order, so the last
+ * one for a task wins. Author is a free-text string carrying the Slack user id
+ * (e.g. "@claudio (U08C8QTNBJ9)"), matched by id substring; a machine back-link
+ * or an unknown author is 'other' and never triggers a turn hand-off.
+ */
+export function lastCommentTurnByTask(comments: Comment[], derekId: string, claudioId: string): Map<string, CommentTurn> {
+  const latest = new Map<string, string>()
+  for (const c of comments) latest.set(c.taskNum, c.author ?? '')
+  const out = new Map<string, CommentTurn>()
+  for (const [taskNum, author] of latest) {
+    out.set(taskNum, author.includes(derekId) ? 'derek' : author.includes(claudioId) ? 'claudio' : 'other')
+  }
+  return out
+}
+
 /**
  * Diff the current board against the user's last snapshot → the deltas worth a
  * "since you were here" mention. Materiality tiers: a status move INTO a
  * review/decision/shipped state, a delivery gaining its link, a brand-new task,
  * and new comments. A task absent from the snapshot (first visit / new task) is
  * NEW; an empty snapshot yields NOTHING (never a flood on first run).
+ *
+ * `turn` (optional) drives the two-way comment loop: when a new comment appears,
+ * it is flagged needsYou ONLY if the latest comment is from the OTHER principal
+ * (Derek sees Claudio's reply as his move, and vice-versa). Omitted → new
+ * comments are never a hand-off (the pre-two-way behaviour), so existing callers
+ * are unaffected.
  */
-export function diffSnapshot(tasks: Task[], commentCounts: Map<string, number>, snap: Snapshot): Delta[] {
+export function diffSnapshot(
+  tasks: Task[],
+  commentCounts: Map<string, number>,
+  snap: Snapshot,
+  turn?: { lastAuthorByTask: Map<string, CommentTurn>; viewer: CommentTurn },
+): Delta[] {
   if (!snap || Object.keys(snap).length === 0) return [] // first visit → nothing is "new"
   const deltas: Delta[] = []
   for (const t of tasks) {
@@ -82,7 +113,12 @@ export function diffSnapshot(tasks: Task[], commentCounts: Map<string, number>, 
     } else if (!prev.l && hasDeliverableLink(t)) {
       deltas.push({ taskNum: t.taskNum, company: t.company, title: t.title, kind: 'linked', needsYou: t.status === 'delivered_awaiting' })
     } else if (nowC > prev.c) {
-      deltas.push({ taskNum: t.taskNum, company: t.company, title: t.title, kind: 'new_comment', needsYou: false })
+      // A new comment is "your move" ONLY when its latest author is the OTHER
+      // principal — Derek sees Claudio's reply as his turn, and vice-versa. Your
+      // own comment, or a machine/unknown author, is never a hand-off. (Two-way loop.)
+      const last = turn?.lastAuthorByTask.get(t.taskNum)
+      const needsYou = !!turn && (last === 'derek' || last === 'claudio') && last !== turn.viewer
+      deltas.push({ taskNum: t.taskNum, company: t.company, title: t.title, kind: 'new_comment', needsYou })
     }
   }
   return deltas
