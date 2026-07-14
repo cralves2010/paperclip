@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "../lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { BRAND_NAME } from "@/lib/brand";
 
 /**
  * Compact revisions panel for a per-stage instructions document. Mirrors the
@@ -64,7 +65,7 @@ export function PipelineStageHistoryPanel({
     onError: (error) => {
       pushToast({
         title: "Failed to restore revision",
-        body: error instanceof Error ? error.message : "Paperclip could not restore the revision.",
+        body: error instanceof Error ? error.message : `${BRAND_NAME} could not restore the revision.`,
         tone: "error",
       });
     },

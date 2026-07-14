@@ -2,6 +2,34 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { brandChipBadge } from "@/lib/status-colors";
 import type { BuiltInAgentStatus } from "@/api/builtInAgents";
+import { BRAND_NAME } from "@/lib/brand";
+
+/**
+ * Provenance label ("Built-in"). Constant for the life of a built-in agent —
+ * this is NOT a lifecycle/status chip, so it never routes through
+ * `StatusBadge`/`AgentStatusBadge` (ux-spec D2).
+ */
+export function BuiltInAgentBadge({
+  className,
+  compact = false,
+}: {
+  className?: string;
+  compact?: boolean;
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        brandChipBadge.blue,
+        compact && "px-1.5 py-0 text-(length:--text-nano)",
+        className,
+      )}
+      title={`Ships with ${BRAND_NAME}`}
+    >
+      Built-in
+    </Badge>
+  );
+}
 
 /**
  * Derived lifecycle chip. Rendered for the amber attention states

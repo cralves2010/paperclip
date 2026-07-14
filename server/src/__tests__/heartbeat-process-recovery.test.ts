@@ -1003,7 +1003,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       returnOwnerAgentId: input.returnOwnerAgentId ?? input.agentId,
       cause: input.cause ?? "stranded_assigned_issue",
       attemptCount: 1,
-      maxAttempts: null,
+      // Fork override: source-scoped stranded recovery is capped at
+      // MAX_STRANDED_RECOVERY_ATTEMPTS=3 (recovery/service.ts) to break the JRS-108
+      // missing-disposition loop. Upstream leaves this null (uncapped). See patch 417ebf3ab.
+      maxAttempts: 3,
     });
     expect(action.evidence).toMatchObject({
       sourceIssueId: input.issueId,

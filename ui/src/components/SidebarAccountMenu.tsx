@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  BookOpen,
   LogOut,
   Megaphone,
   type LucideIcon,
@@ -19,9 +18,9 @@ import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
 import { ThemeToggle } from "./ThemeToggle";
 import { SidebarServerInfo } from "./SidebarServerInfo";
 import { Badge } from "@/components/ui/badge";
+import { BRAND_SHORT_NAME, formatBrandedVersion } from "@/lib/brand";
 
 const PROFILE_SETTINGS_PATH = "/company/settings/instance/profile";
-const DOCS_URL = "https://docs.paperclip.ing/";
 const FEEDBACK_URL = "https://paperclip.ing/feedback";
 const SOURCE_REPOSITORY_URL = "https://github.com/paperclipai/paperclip";
 const SOURCE_VERSION_RE = /\+\d+\.git\.([0-9a-f]{7,40})(?:\.dirty)?$/i;
@@ -207,7 +206,7 @@ export function SidebarAccountMenu({
                       </a>
                     ) : null}
                     <p>
-                      Paperclip{" "}
+                      {BRAND_SHORT_NAME}{" "}
                       <a
                         href={`${SOURCE_REPOSITORY_URL}/commit/${sourceFullSha}`}
                         target="_blank"
@@ -219,7 +218,7 @@ export function SidebarAccountMenu({
                     </p>
                   </div>
                 ) : version ? (
-                  <p className="mt-1 text-xs text-muted-foreground">Paperclip v{version}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{BRAND_SHORT_NAME} {formatBrandedVersion(version)}</p>
                 ) : null}
               </div>
             </div>
@@ -238,14 +237,6 @@ export function SidebarAccountMenu({
                 icon={UserRoundPen}
                 href={PROFILE_SETTINGS_PATH}
                 onClick={closeNavigationChrome}
-              />
-              <MenuAction
-                label="Documentation"
-                description="Open Paperclip docs in a new tab."
-                icon={BookOpen}
-                href={DOCS_URL}
-                external
-                onClick={() => setOpen(false)}
               />
               <MenuAction
                 label="Feedback"

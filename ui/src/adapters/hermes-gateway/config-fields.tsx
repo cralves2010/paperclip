@@ -8,6 +8,7 @@ import {
   Field,
   ToggleField,
 } from "../../components/agent-config-primitives";
+import { BRAND_NAME } from "@/lib/brand";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
@@ -162,8 +163,8 @@ export function HermesGatewayConfigFields({
       />
 
       <Field
-        label="Paperclip API URL"
-        hint="Optional Paperclip API URL reachable by the Hermes host. This is not a credential."
+        label={`${BRAND_NAME} API URL`}
+        hint={`Optional ${BRAND_NAME} API URL reachable by the Hermes host. This is not a credential.`}
       >
         <DraftInput
           value={paperclipApiUrl}

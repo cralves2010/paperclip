@@ -34,6 +34,7 @@ import {
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
 
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
+import { BRAND_NAME } from "@/lib/brand";
 
 const roleLabels = AGENT_ROLE_LABELS as Record<string, string>;
 
@@ -68,8 +69,8 @@ interface EnvironmentDescriptor {
 
 const localEnvironmentDescriptor: EnvironmentDescriptor = {
   label: "Local",
-  detail: "Paperclip host",
-  title: "Local - Paperclip host",
+  detail: `${BRAND_NAME} host`,
+  title: `Local - ${BRAND_NAME} host`,
 };
 
 const loadingEnvironmentDescriptor: EnvironmentDescriptor = {
@@ -132,7 +133,7 @@ function describeEnvironment(
   const detail = environment.driver === "sandbox"
     ? `${getSandboxProviderLabel(environment, capabilities)} sandbox provider`
     : environment.driver === "local"
-      ? "Paperclip host"
+      ? `${BRAND_NAME} host`
       : formatEnvironmentDriver(environment.driver);
 
   return {

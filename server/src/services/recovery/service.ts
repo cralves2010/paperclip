@@ -87,6 +87,14 @@ const STALE_ACTIVE_RUN_EVALUATION_ORIGIN_KIND = RECOVERY_ORIGIN_KINDS.staleActiv
 const DEFERRED_WAKE_CONTEXT_KEY = "_paperclipWakeContext";
 const EXECUTION_REVIEW_PARTICIPANT_RECOVERY_REASON = "execution_review_participant_recovery";
 const RESOLVED_DEPENDENCY_WAKE_BACKSTOP_CANDIDATE_LIMIT = 500;
+// Hard cap on automatic source-scoped stranded-recovery attempts per issue.
+// Without this, recovery actions were created with `maxAttempts: null` and the
+// corrective wake re-armed on every `attemptCount` increment, so an agent that
+// kept finishing a run without recording a disposition was woken forever
+// (the per-run handoff cap resets each run, so it never stopped the cycle).
+// After this many attempts we stop re-arming, post a single "human attention
+// required" notice, and leave the issue `blocked`.
+const MAX_STRANDED_RECOVERY_ATTEMPTS = 3;
 const SESSIONED_LOCAL_ADAPTERS = new Set([
   "claude_local",
   "codex_local",
@@ -2833,7 +2841,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       monitorPolicy: recoveryCause === "provider_quota" && !ownerAgentId
         ? { type: "wait_recovery", retryAgentId: routing.returnOwnerAgentId }
         : null,
-      maxAttempts: null,
+      maxAttempts: MAX_STRANDED_RECOVERY_ATTEMPTS,
       lastAttemptAt: now,
     });
 
@@ -3179,6 +3187,13 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         agentId: recoveryAction.returnOwnerAgentId,
       });
     }
+    // Stop the recovery loop: once automatic attempts are exhausted we keep the
+    // issue `blocked`, post a single human-attention notice, and do NOT re-arm
+    // the corrective wake (or re-target the assignee). Use `>=` (never `===`) so
+    // a missed boundary still trips the guard.
+    const recoveryExhausted =
+      recoveryAction.maxAttempts != null &&
+      recoveryAction.attemptCount >= recoveryAction.maxAttempts;
     const blockerIds = await existingUnresolvedBlockerIssueIds(input.issue.companyId, input.issue.id);
     const updated = await issuesSvc.update(input.issue.id, {
       status: "blocked",
@@ -3260,6 +3275,45 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       }
     }
 
+    if (recoveryExhausted) {
+      const exhaustedMarker = `Recovery loop exhausted for action \`${recoveryAction.id}\``;
+      const alreadyEscalatedToHuman = await db
+        .select({ id: issueComments.id, body: issueComments.body })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.issueId, input.issue.id),
+            eq(issueComments.authorType, "system"),
+          ),
+        )
+        .orderBy(desc(issueComments.createdAt))
+        .limit(50)
+        .then((rows) => rows.some((row) => (row.body ?? "").includes(exhaustedMarker)));
+
+      if (!alreadyEscalatedToHuman) {
+        const lastFailure = summarizeRunFailureForIssueComment(input.latestRun);
+        const exhaustedBody = [
+          "## Human attention required — recovery loop exhausted",
+          "",
+          `Paperclip retried automatic recovery ${recoveryAction.attemptCount} time(s) ` +
+            `(limit ${recoveryAction.maxAttempts}) without recording a valid issue disposition. ` +
+            "Automatic recovery is now paused; this issue will stay `blocked` until a human or the " +
+            "recovery owner resolves it.",
+          "",
+          `- ${exhaustedMarker}`,
+          `- Recovery owner: ${recoveryAction.ownerAgentId ? agentUiLink(recoveryOwner, prefix) : "board escalation"}`,
+          lastFailure ? `- Details:${lastFailure}` : null,
+          "- Next action: fix the underlying problem, then move the issue out of `blocked` " +
+            "(or record an intentional manual resolution).",
+        ]
+          .filter((line): line is string => line !== null)
+          .join("\n");
+        await issuesSvc.addComment(input.issue.id, exhaustedBody, {}, {
+          authorType: "system",
+        });
+      }
+    }
+
     await logActivity(db, {
       companyId: input.issue.companyId,
       actorType: "system",
@@ -3293,8 +3347,17 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         previousOwnerAgentId: recoveryAction.previousOwnerAgentId,
         returnOwnerAgentId: recoveryAction.returnOwnerAgentId,
         blockerIssueIds: blockerIds,
+        recoveryAttemptCount: recoveryAction.attemptCount,
+        recoveryMaxAttempts: recoveryAction.maxAttempts,
+        recoveryExhausted,
       },
     });
+
+    if (recoveryExhausted) {
+      // Loop guard: attempts exhausted. Leave the issue `blocked` for a human/owner
+      // and skip re-arming the corrective wake and re-targeting the assignee.
+      return updated;
+    }
 
     await enqueueSourceScopedStrandedRecoveryWake({
       action: recoveryAction,

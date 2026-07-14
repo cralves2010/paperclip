@@ -929,7 +929,9 @@ describe("environment routes", () => {
       "company-1",
       expect.objectContaining({
         provider: "local_encrypted",
-        value: "super-secret-key",
+        // The privateKey transform trims outer whitespace and appends the
+        // trailing newline required by OpenSSH/libcrypto (see 43222b54).
+        value: "super-secret-key\n",
       }),
       expect.any(Object),
     );
@@ -982,7 +984,8 @@ describe("environment routes", () => {
       "company-1",
       expect.objectContaining({
         provider: "aws_secrets_manager",
-        value: "super-secret-key",
+        // Trailing newline appended by the privateKey transform (43222b54).
+        value: "super-secret-key\n",
       }),
       expect.any(Object),
     );

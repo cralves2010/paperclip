@@ -42,6 +42,7 @@ COPY --parents packages/plugins/sandbox-providers/./*/package.json packages/plug
 COPY packages/plugins/paperclip-plugin-fake-sandbox/package.json packages/plugins/paperclip-plugin-fake-sandbox/
 COPY packages/plugins/plugin-llm-wiki/package.json packages/plugins/plugin-llm-wiki/
 COPY packages/plugins/plugin-workspace-diff/package.json packages/plugins/plugin-workspace-diff/
+COPY packages/plugins/plugin-agent-outputs/package.json packages/plugins/plugin-agent-outputs/
 COPY patches/ patches/
 COPY scripts/link-plugin-dev-sdk.mjs scripts/
 
@@ -55,6 +56,8 @@ RUN pnpm --filter @paperclipai/ui build
 RUN pnpm --filter @paperclipai/plugin-sdk build
 RUN pnpm --filter @paperclipai/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
+RUN pnpm --filter @m42/plugin-agent-outputs build
+RUN test -f packages/plugins/plugin-agent-outputs/dist/manifest.js || (echo "ERROR: plugin-agent-outputs build output missing" && exit 1)
 
 FROM base AS production
 ARG USER_UID=1000

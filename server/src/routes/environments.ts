@@ -39,6 +39,7 @@ import {
   normalizeEnvironmentConfigForPersistence,
   normalizeEnvironmentConfigForProbe,
   readSshEnvironmentPrivateKeySecretId,
+  resolveEnvironmentDriverConfigForRuntime,
   type ParsedEnvironmentConfig,
 } from "../services/environment-config.js";
 import { probeEnvironment } from "../services/environment-probe.js";
@@ -950,13 +951,21 @@ export function environmentRoutes(
         createdAt: new Date(),
         updatedAt: new Date(),
       };
+      // Resolve any secret refs (e.g. SSH privateKeySecretRef) so the probe
+      // gets the actual plaintext key, not the unresolved reference. Without
+      // this step, /probe-config callers using a Secret reference would see
+      // "Permission denied (publickey)" because ssh would be invoked without
+      // the -i flag.
+      const resolvedConfig = await resolveEnvironmentDriverConfigForRuntime(
+        db,
+        companyId,
+        { driver: req.body.driver, config: normalizedConfig },
+        { allowUnsavedDraft: true },
+      );
       const probe = await probeEnvironment(db, environment, {
         companyId,
         pluginWorkerManager: options.pluginWorkerManager,
-        resolvedConfig: {
-          driver: req.body.driver,
-          config: normalizedConfig,
-        } as ParsedEnvironmentConfig,
+        resolvedConfig,
       });
       await logInstanceEnvironmentActivity({
         actor,

@@ -408,6 +408,11 @@ type SecretConsumerContext = {
   heartbeatRunId?: string | null;
   pluginId?: string | null;
   allowedBindingIds?: string[] | null;
+  // When true, skip the binding existence check. Used by unsaved-environment
+  // draft probes where the user is mid-creation and no binding row exists
+  // yet — caller has already enforced the same authorization that protects
+  // the eventual binding row. Audit access events still fire.
+  skipBindingCheck?: boolean;
 };
 
 type SecretBindingContext = Omit<SecretConsumerContext, "consumerType"> & {
@@ -1031,7 +1036,11 @@ export function secretService(db: Db) {
       if (secret.status !== "active") {
         throw unprocessable("Secret is not active", { code: "secret_inactive" });
       }
-      const binding = await assertBindingContext(companyId, secret.id, bindingContext);
+      // Draft probes (skipBindingCheck) have no binding row yet; downstream
+      // audit logging tolerates a null binding (bindingId: binding?.id ?? null).
+      const binding = bindingContext?.skipBindingCheck
+        ? null
+        : await assertBindingContext(companyId, secret.id, bindingContext);
       const versionRow = await getSecretVersion(secret.id, resolvedVersion);
       if (!versionRow) throw new HttpError(404, "Secret version not found", { code: "version_missing" });
       if (versionRow.status === "disabled" || versionRow.status === "destroyed" || versionRow.revokedAt) {

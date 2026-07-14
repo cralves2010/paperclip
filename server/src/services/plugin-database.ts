@@ -187,6 +187,21 @@ function assertNoBannedSql(statement: string): void {
   }
 }
 
+function assertCompanyIdFilter(statement: string, refs: SqlRef[]): void {
+  // Any plugin query touching public.* must include a parameterized company_id
+  // filter so a malicious or buggy plugin cannot read across tenants.
+  const touchesPublic = refs.some((ref) => ref.schema === "public");
+  if (!touchesPublic) return;
+  const normalized = normaliseSql(statement);
+  const parameterizedEquality = /\bcompany_id\s*=\s*\$\d+/.test(normalized);
+  const parameterizedInClause = /\bcompany_id\s+in\s*\(\s*\$\d+/.test(normalized);
+  if (!parameterizedEquality && !parameterizedInClause) {
+    throw new Error(
+      "Plugin SQL touching public tables must filter by company_id = $N or company_id IN ($N, ...)",
+    );
+  }
+}
+
 export function validatePluginMigrationStatement(
   statement: string,
   namespace: string,
@@ -263,7 +278,8 @@ export function validatePluginRuntimeQuery(
   }
 
   const allowedCoreReadTables = new Set(coreReadTables);
-  for (const ref of extractQualifiedRefs(statement)) {
+  const refs = extractQualifiedRefs(statement);
+  for (const ref of refs) {
     if (ref.schema === namespace) continue;
     if (ref.schema === "public") {
       assertAllowedPublicRead(ref, allowedCoreReadTables);
@@ -271,6 +287,7 @@ export function validatePluginRuntimeQuery(
     }
     throw new Error(`ctx.db.query cannot read schema "${ref.schema}"`);
   }
+  assertCompanyIdFilter(statement, refs);
 }
 
 export function validatePluginRuntimeExecute(query: string, namespace: string): void {

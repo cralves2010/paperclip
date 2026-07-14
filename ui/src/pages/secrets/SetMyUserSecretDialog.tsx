@@ -17,6 +17,7 @@ import { ApiError } from "../../api/client";
 import { queryKeys } from "../../lib/queryKeys";
 import { useToastActions } from "../../context/ToastContext";
 import { UserSecretChip } from "./user-secret-presentation";
+import { BRAND_NAME } from "@/lib/brand";
 
 /**
  * Shared "set my value" dialog for a user-secret definition. Used both from the
@@ -136,7 +137,7 @@ export function SetMyUserSecretDialog({
                   autoFocus
                 />
                 <p className="text-(length:--text-micro) text-muted-foreground">
-                  Points at your own credential in the configured provider. Paperclip stores the
+                  Points at your own credential in the configured provider. {BRAND_NAME} stores the
                   reference, not the value.
                 </p>
               </div>

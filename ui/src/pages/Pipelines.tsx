@@ -127,6 +127,7 @@ import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
 import { applyLocalQueuedIssueCommentState, isQueuedIssueComment } from "../lib/optimistic-issue-comments";
 import type { IssueChatComment } from "../lib/issue-chat-messages";
 import { Badge } from "@/components/ui/badge";
+import { BRAND_NAME } from "@/lib/brand";
 
 type PipelineConversationActionableInteraction =
   | SuggestTasksInteraction
@@ -2918,7 +2919,7 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <p>
                   Moving this item may skip stage automation, review expectations, and configured transition paths.
-                  Paperclip will still enforce blockers and other hard safety checks.
+                  {BRAND_NAME} will still enforce blockers and other hard safety checks.
                 </p>
               </div>
             </div>
@@ -2968,7 +2969,7 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
           <DialogHeader>
             <DialogTitle>{retryDialogScope === "previous_stage" ? "Retry previous step" : "Re-run this step"}</DialogTitle>
             <DialogDescription>
-              Review the automation preflight before Paperclip dispatches a fresh run.
+              Review the automation preflight before {BRAND_NAME} dispatches a fresh run.
             </DialogDescription>
           </DialogHeader>
           {retryPlan.isLoading ? (

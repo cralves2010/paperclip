@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOptionalToastActions } from "../context/ToastContext";
 import { CHROMELESS_DISPLAY_MODES, isChromelessDisplayMode } from "../lib/pwa-display-mode";
+import { BRAND_NAME } from "@/lib/brand";
 
 function ControlButton({
   label,
@@ -68,7 +69,7 @@ export function StandaloneBrowserControls({ mobile }: { mobile: boolean }) {
     const url = window.location.href;
     try {
       if (navigator.share) {
-        await navigator.share({ title: document.title || "Paperclip", url });
+        await navigator.share({ title: document.title || BRAND_NAME, url });
         return;
       }
       if (navigator.clipboard?.writeText) {

@@ -35,6 +35,7 @@ import { PriorityIcon } from "./PriorityIcon";
 import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { Badge } from "@/components/ui/badge";
+import { BRAND_NAME } from "@/lib/brand";
 
 const OTHER_ANSWER_ID = "__paperclip_other__";
 
@@ -1310,8 +1311,8 @@ function RequestConfirmationResolution({
             </div>
             <p className="mt-1 leading-6">
               {resumeFailure.status === "retrying"
-                ? `Paperclip is retrying the agent resume after approval (attempt ${resumeFailure.attempt}/${resumeFailure.maxAttempts}).`
-                : "Paperclip needs attention before the agent can resume this approved work."}
+                ? `${BRAND_NAME} is retrying the agent resume after approval (attempt ${resumeFailure.attempt}/${resumeFailure.maxAttempts}).`
+                : `${BRAND_NAME} needs attention before the agent can resume this approved work.`}
             </p>
             {resumeFailure.errorCode ? (
               <p className="mt-1 leading-6">

@@ -8,6 +8,7 @@ import type {
   PipelineStage,
 } from "../api/pipelines";
 import { assigneeValueFromSelection } from "./assignees";
+import { BRAND_NAME } from "@/lib/brand";
 
 export const INTERNAL_FIELD_KEYS = new Set([
   "nextSuggestedStageId",
@@ -291,7 +292,7 @@ function readDecision(payload: Record<string, unknown>) {
 function actorName(event: PipelineCaseEvent) {
   if (event.actorAgent?.name) return event.actorAgent.name;
   if (event.actorType === "user") return "Board";
-  if (event.actorType === "system") return "Paperclip";
+  if (event.actorType === "system") return BRAND_NAME;
   return null;
 }
 
