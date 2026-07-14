@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+*.log
+# Google service-account keys — full read+write to Derek's SoT sheet. NEVER commit.
+sa.json
+*-sa.json
+# Local scratch / graph artifacts that must never be committed.
+tools/graphify-out/
+lom-dir.html

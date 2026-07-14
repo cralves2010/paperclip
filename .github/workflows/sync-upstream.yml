@@ -1,0 +1,313 @@
+# Weekly sync from upstream paperclipai/paperclip into this fork.
+# Strategy: fast-forward master, then rebase branding/m42 onto it.
+# If anything diverges or conflicts, opens a GitHub issue for manual resolution.
+#
+# Schedule: Mondays 06:00 UTC (≈ 03:00 BRT).
+# Manual: Actions tab → "Sync from upstream" → Run workflow.
+
+name: Sync from upstream
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: paperclipai/paperclip
+  UPSTREAM_BRANCH: master
+  BRANDING_BRANCH: branding/m42
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # SYNC_PAT (fine-grained PAT, Contents R/W + Workflows R/W, scoped to
+          # this repo) is REQUIRED: the default GITHUB_TOKEN cannot push commits
+          # that create or update files under .github/workflows/ ("refusing to
+          # allow a GitHub App to create or update workflow ... without
+          # 'workflows' permission"). Upstream touches its workflows regularly,
+          # which broke the syncs of 2026-06-01 and 2026-06-08.
+          # The fallback keeps behavior identical to before if the secret is
+          # missing, so this change is safe to land before the secret exists.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity + rerere
+        run: |
+          git config user.name "sync-bot[m42]"
+          git config user.email "sync@m42ai.tech"
+          # rerere replays prior conflict resolutions automatically; cheap insurance
+          git config rerere.enabled true
+          git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git || true
+          git fetch upstream ${{ env.UPSTREAM_BRANCH }} --tags
+
+      - name: Sync master (fast-forward only)
+        id: master_sync
+        run: |
+          # After adding upstream remote, "master" alone is ambiguous; be explicit
+          git checkout -B master origin/master
+          BEFORE=$(git rev-parse HEAD)
+          if git merge --ff-only upstream/${{ env.UPSTREAM_BRANCH }}; then
+            AFTER=$(git rev-parse HEAD)
+            if [ "$BEFORE" = "$AFTER" ]; then
+              echo "result=up_to_date" >> "$GITHUB_OUTPUT"
+              echo "new_commits=0" >> "$GITHUB_OUTPUT"
+              echo "::notice::master already up to date with upstream"
+            else
+              COUNT=$(git rev-list --count "$BEFORE..$AFTER")
+              echo "result=synced" >> "$GITHUB_OUTPUT"
+              echo "new_commits=$COUNT" >> "$GITHUB_OUTPUT"
+              git push origin master
+              echo "::notice::synced $COUNT new commits to master"
+            fi
+          else
+            echo "result=diverged" >> "$GITHUB_OUTPUT"
+            echo "::error::master has commits not in upstream — cannot fast-forward"
+          fi
+
+      - name: Rebase branding/m42 onto master
+        id: rebase
+        if: steps.master_sync.outputs.result != 'diverged'
+        run: |
+          # Use origin/<branch> to avoid ambiguity with the upstream remote
+          git checkout -B ${{ env.BRANDING_BRANCH }} origin/${{ env.BRANDING_BRANCH }}
+          BEFORE=$(git rev-parse HEAD)
+          if git rebase origin/master; then
+            AFTER=$(git rev-parse HEAD)
+            if [ "$BEFORE" = "$AFTER" ]; then
+              echo "result=noop" >> "$GITHUB_OUTPUT"
+              echo "::notice::branding branch already on top of master"
+            else
+              echo "result=rebased" >> "$GITHUB_OUTPUT"
+              git push --force-with-lease origin ${{ env.BRANDING_BRANCH }}
+              echo "::notice::branding/m42 rebased and pushed"
+            fi
+          else
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+            git rebase --abort || true
+            echo "::warning::rebase conflict in branding/m42 — needs manual resolution"
+          fi
+
+      - name: Open issue if conflict or divergence
+        if: |
+          steps.master_sync.outputs.result == 'diverged' ||
+          steps.rebase.outputs.result == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          REASON="unknown"
+          if [ "${{ steps.master_sync.outputs.result }}" = "diverged" ]; then
+            REASON="master diverged from upstream — cannot fast-forward"
+          elif [ "${{ steps.rebase.outputs.result }}" = "conflict" ]; then
+            REASON="rebase conflict between branding/m42 and master"
+          fi
+          BODY=$(cat <<EOF
+          The weekly upstream sync workflow could not complete automatically.
+
+          **Reason:** $REASON
+          **New upstream commits on master:** ${{ steps.master_sync.outputs.new_commits }}
+
+          ## Manual resolution
+
+          On your local Windows machine:
+
+          \`\`\`powershell
+          cd c:\\Users\\cralv\\dev\\paperclip
+          git fetch origin
+          git fetch upstream
+          git checkout master
+          git merge --ff-only upstream/master || git reset --hard upstream/master  # if diverged
+          git push origin master
+
+          git checkout branding/m42
+          git rebase master
+          # Resolve any conflicts (git rerere helps for repeats)
+          git push --force-with-lease origin branding/m42
+          \`\`\`
+
+          Then deploy to VPS:
+
+          \`\`\`powershell
+          ssh root@72.61.6.37 "cd /opt/apps/paperclip && sudo -u cralv git fetch && sudo -u cralv git reset --hard origin/branding/m42 && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build server"
+          \`\`\`
+
+          ---
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          # Ensure labels exist (idempotent) so issue creation never fails silently.
+          gh label create sync --repo "${{ github.repository }}" --color 1d76db --description "Upstream sync automation" --force >/dev/null 2>&1 || true
+          gh label create needs-manual --repo "${{ github.repository }}" --color d93f0b --description "Requires manual resolution" --force >/dev/null 2>&1 || true
+          if gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "Upstream sync needs attention ($DATE)" \
+            --body "$BODY" \
+            --label "sync" --label "needs-manual"; then
+            echo "::notice::opened sync-needs-manual issue"
+          else
+            echo "::error::could not open sync issue — check labels/permissions"
+          fi
+          # Surface the conflict as a FAILED run so it shows red in the Actions tab,
+          # instead of a misleading green check (the rebase --abort masked it before).
+          exit 1
+
+      # Detect new stable upstream tag (vYYYY.MDD.0). When such a tag appears
+      # and includes our current origin/master (i.e. switching to it would not
+      # regress the schema), open a "ready to switch" issue. State is kept
+      # implicitly via the issue title — a duplicate title is a no-op.
+      - name: Detect stable upstream tag
+        id: tag_detect
+        run: |
+          # Filter: stable calver tags only (no canary, no 0.x.x)
+          LATEST_TAG=$(git ls-remote --tags --refs --sort=-v:refname upstream \
+              | awk '{print $2}' \
+              | sed 's|refs/tags/||' \
+              | grep -E '^v202[6-9]\.[0-9]+\.[0-9]+$' \
+              | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "result=none" >> "$GITHUB_OUTPUT"
+            echo "::notice::no stable upstream tag matched the calver pattern"
+            exit 0
+          fi
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+          # Resolve tag SHA (peel annotated tags to the commit they point at)
+          git fetch upstream "refs/tags/${LATEST_TAG}:refs/tags/${LATEST_TAG}" --no-tags || true
+          TAG_SHA=$(git rev-parse "${LATEST_TAG}^{commit}" 2>/dev/null || true)
+          if [ -z "$TAG_SHA" ]; then
+            echo "result=unresolved" >> "$GITHUB_OUTPUT"
+            echo "::warning::could not resolve SHA for tag $LATEST_TAG"
+            exit 0
+          fi
+          echo "tag_sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
+
+          # SAFE-TO-SWITCH check: is origin/master an ancestor of the tag?
+          # If yes, the tag includes everything currently in our master, so
+          # switching the rebase base from master to this tag would not regress.
+          MASTER_SHA=$(git rev-parse origin/master)
+          if git merge-base --is-ancestor "$MASTER_SHA" "$TAG_SHA"; then
+            echo "result=safe_to_switch" >> "$GITHUB_OUTPUT"
+            echo "::notice::tag $LATEST_TAG is at or ahead of origin/master — safe to switch"
+          else
+            BEHIND=$(git rev-list --count "${TAG_SHA}..${MASTER_SHA}")
+            echo "result=master_ahead" >> "$GITHUB_OUTPUT"
+            echo "master_ahead_by=$BEHIND" >> "$GITHUB_OUTPUT"
+            echo "::notice::tag $LATEST_TAG is $BEHIND commits behind origin/master — wait for next tag"
+          fi
+
+      - name: Open issue when tag becomes safe to switch
+        if: steps.tag_detect.outputs.result == 'safe_to_switch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag_detect.outputs.latest_tag }}
+        run: |
+          # Dedup by title: don't open a second issue for the same tag
+          TITLE="Upstream stable tag $TAG is safe to switch to"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::issue already open for $TAG (#$EXISTING)"
+            exit 0
+          fi
+          BODY=$(cat <<EOF
+          A new stable upstream tag is available and **contains everything that is currently in our \`master\`**.
+          This means switching from master-based sync to tag-based sync would NOT regress the schema or revert deployed code.
+
+          - **Tag:** \`$TAG\`
+          - **Upstream:** ${{ env.UPSTREAM_REPO }}
+          - **Detected on:** $(date -u +%Y-%m-%d)
+
+          ## How to switch (only when you decide to)
+
+          1. Edit \`.github/workflows/sync-upstream.yml\`:
+             - Replace \`git rebase origin/master\` with \`git rebase $TAG\`
+             - (Optional) Replace \`fetch upstream master\` with \`fetch upstream master --tags\` and pin the rebase base to a workflow-input tag for explicit control.
+          2. Commit the workflow change to \`branding/m42\`.
+          3. Run the workflow manually (Actions tab → Sync from upstream → Run workflow) and verify branding rebase succeeds.
+          4. Deploy to VPS:
+             \`\`\`powershell
+             ssh root@72.61.6.37 "cd /opt/apps/paperclip && sudo -u cralv git fetch && sudo -u cralv git reset --hard origin/branding/m42 && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build server"
+             \`\`\`
+          5. Smoke-test the production app.
+
+          ## Why this matters
+
+          Upstream master gets ~25 commits/week, schema evolves continuously, and migrations can be additive or breaking. Tagged releases are the upstream-tested checkpoints (~1/week). Switching to tag-based sync gives us a stable cadence with less surprise. We waited for this moment because rolling back from a master snapshot to an older tag would regress the schema. This tag clears that risk.
+
+          ---
+          Triggered by run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          )
+          gh label create upstream-tag --repo "${{ github.repository }}" --color 0e8a16 --description "Upstream stable tag tracking" --force >/dev/null 2>&1 || true
+          gh label create ready-to-switch --repo "${{ github.repository }}" --color fbca04 --description "Safe to switch sync strategy" --force >/dev/null 2>&1 || true
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "$TITLE" \
+            --body "$BODY" \
+            --label "upstream-tag" --label "ready-to-switch" || true
+
+      # Safety net: if any step above failed (e.g. push rejected, fetch error),
+      # open a needs-manual issue so the failure is not silent. Deduplicated by
+      # open issues carrying the sync + needs-manual labels, so the conflict
+      # step above (which exits 1 after opening its own issue) does not cause
+      # a second issue here.
+      - name: Open issue on unexpected failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date -u +%F)
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --label "sync" --label "needs-manual" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::open sync/needs-manual issue already exists (#$EXISTING), skipping"
+            exit 0
+          fi
+          gh label create sync --repo "${{ github.repository }}" --color 1d76db --description "Upstream sync automation" --force >/dev/null 2>&1 || true
+          gh label create needs-manual --repo "${{ github.repository }}" --color d93f0b --description "Requires manual resolution" --force >/dev/null 2>&1 || true
+          BODY=$(cat <<EOF
+          The weekly upstream sync workflow failed unexpectedly (a step errored
+          outside the known conflict/divergence paths).
+
+          Check the run log and resolve manually:
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          Common cause: pushes touching .github/workflows/ require the SYNC_PAT
+          repository secret (fine-grained PAT with Contents R/W + Workflows R/W).
+          Verify the secret exists and has not expired.
+          EOF
+          )
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "sync-upstream failed on $DATE" \
+            --body "$BODY" \
+            --label "sync" --label "needs-manual" || \
+            echo "::error::could not open failure issue - check labels/permissions"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Sync summary"
+            echo ""
+            echo "- master sync: ${{ steps.master_sync.outputs.result }}"
+            echo "- new commits on master: ${{ steps.master_sync.outputs.new_commits || '0' }}"
+            echo "- branding rebase: ${{ steps.rebase.outputs.result }}"
+            echo "- latest stable tag: ${{ steps.tag_detect.outputs.latest_tag || 'n/a' }}"
+            echo "- tag relative to master: ${{ steps.tag_detect.outputs.result }}"
+            if [ "${{ steps.tag_detect.outputs.result }}" = "master_ahead" ]; then
+              echo "- master ahead of tag by: ${{ steps.tag_detect.outputs.master_ahead_by }} commits"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
