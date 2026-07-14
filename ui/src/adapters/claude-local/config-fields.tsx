@@ -8,6 +8,7 @@ import {
 } from "../../components/agent-config-primitives";
 import { ChoosePathButton } from "../../components/PathInstructionsModal";
 import { LocalWorkspaceRuntimeFields } from "../local-workspace-runtime-fields";
+import { BRAND_NAME } from "@/lib/brand";
 
 const inputClass =
   "w-full rounded-md border border-border px-2.5 py-1.5 bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/40";
@@ -167,7 +168,7 @@ export function ClaudeLocalAdvancedFields({
           </Field>
           <Field
             label="ACP state directory"
-            hint="Optional ACP session state directory. Defaults to Paperclip-managed company/agent scoped storage."
+            hint={`Optional ACP session state directory. Defaults to ${BRAND_NAME}-managed company/agent scoped storage.`}
           >
             <div className="flex items-center gap-2">
               <DraftInput

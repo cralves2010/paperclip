@@ -1,4 +1,5 @@
 import type { PipelineStage } from "../api/pipelines";
+import { BRAND_NAME } from "@/lib/brand";
 
 /**
  * UI-side reader + copy helpers for the "Break into pieces" stage primitive.
@@ -151,7 +152,7 @@ export function breakdownSummarySentence(
   }
   const noun = config.pieceNoun;
   const parts: string[] = [
-    `Paperclip will create one ${noun} per item in ${names.targetPipelineName} → ${names.entryStageName}`,
+    `${BRAND_NAME} will create one ${noun} per item in ${names.targetPipelineName} → ${names.entryStageName}`,
   ];
   if (names.inheritedFieldLabels.length > 0) {
     parts.push(`carry over ${joinWithAnd(names.inheritedFieldLabels)}`);

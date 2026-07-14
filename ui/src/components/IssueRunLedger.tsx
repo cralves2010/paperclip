@@ -14,6 +14,7 @@ import {
 } from "../api/heartbeats";
 import { useToastActions } from "../context/ToastContext";
 import { cn, relativeTime } from "../lib/utils";
+import { BRAND_NAME } from "@/lib/brand";
 import { queryKeys } from "../lib/queryKeys";
 import { keepPreviousDataForSameQueryTail } from "../lib/query-placeholder-data";
 import { describeRunRetryState } from "../lib/runRetryState";
@@ -122,7 +123,7 @@ const PENDING_LIVENESS_COPY: LivenessCopy = {
 const RETRY_PENDING_LIVENESS_COPY: LivenessCopy = {
   label: "Retry pending",
   tone: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
-  description: "Paperclip queued an automatic retry that has not started yet.",
+  description: `${BRAND_NAME} queued an automatic retry that has not started yet.`,
 };
 
 const MISSING_LIVENESS_COPY: LivenessCopy = {
@@ -400,7 +401,7 @@ function watchdogDecisionErrorMessage(error: unknown) {
   }
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "Paperclip could not record the watchdog decision.";
+    : `${BRAND_NAME} could not record the watchdog decision.`;
 }
 
 export function IssueRunLedger({

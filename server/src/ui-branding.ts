@@ -25,6 +25,22 @@ export type WorktreeUiBranding = {
   instanceId: string | null;
 };
 
+// Instance-level branding (e.g. white-label of the product name "Paperclip").
+// Separated from WorktreeUiBranding because it has different semantics:
+// worktree branding tags a dev worktree; instance branding renames the product
+// for a deployed instance.
+//
+// `revision` is an optional fork-local sequential counter (e.g. "07") rendered
+// as a suffix next to the upstream semver in account/version chips. It is
+// computed at deploy time by counting commits between the fork's tracking base
+// and HEAD, so the upstream semver value is never modified.
+export type InstanceUiBranding = {
+  enabled: boolean;
+  name: string | null;
+  shortName: string | null;
+  revision: string | null;
+};
+
 function isTruthyEnvValue(value: string | undefined): boolean {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
@@ -202,6 +218,70 @@ export function renderRuntimeBrandingMeta(branding: WorktreeUiBranding): string 
   return tags.join("\n");
 }
 
+// Read instance-level branding from env (used for white-label deployments).
+// Decoupled from worktree branding so neither feature interferes with the other.
+export function isInstanceUiBrandingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isTruthyEnvValue(env.PAPERCLIP_INSTANCE_BRANDING) || Boolean(nonEmpty(env.PAPERCLIP_BRAND_NAME));
+}
+
+export function getInstanceUiBranding(env: NodeJS.ProcessEnv = process.env): InstanceUiBranding {
+  if (!isInstanceUiBrandingEnabled(env)) {
+    return { enabled: false, name: null, shortName: null, revision: null };
+  }
+  const name = nonEmpty(env.PAPERCLIP_BRAND_NAME);
+  const shortName = nonEmpty(env.PAPERCLIP_BRAND_SHORT_NAME) ?? name;
+  // Revision is purely additive — it never replaces the upstream semver, it
+  // only renders alongside it as a fork-local sequence number. Padding stays
+  // server-side so the UI can render it verbatim.
+  const revision = normalizeRevision(env.PAPERCLIP_BRAND_REVISION);
+  if (!name) return { enabled: false, name: null, shortName: null, revision: null };
+  return { enabled: true, name, shortName, revision };
+}
+
+function normalizeRevision(value: string | undefined): string | null {
+  const raw = nonEmpty(value);
+  if (!raw) return null;
+  // Accept numeric strings (e.g. "5", "07"); zero-pad to at least 2 digits so
+  // sidebar chips line up. Non-numeric values (e.g. short SHAs) pass through
+  // untouched.
+  if (/^\d+$/.test(raw)) return raw.padStart(2, "0");
+  return raw;
+}
+
+export function renderInstanceBrandingMeta(branding: InstanceUiBranding): string {
+  if (!branding.enabled || !branding.name) return "";
+  const parts = [
+    '<meta name="paperclip-instance-branding-enabled" content="true" />',
+    `<meta name="paperclip-instance-brand-name" content="${escapeHtmlAttribute(branding.name)}" />`,
+  ];
+  if (branding.shortName) {
+    parts.push(
+      `<meta name="paperclip-instance-brand-short-name" content="${escapeHtmlAttribute(branding.shortName)}" />`,
+    );
+  }
+  if (branding.revision) {
+    parts.push(
+      `<meta name="paperclip-instance-brand-revision" content="${escapeHtmlAttribute(branding.revision)}" />`,
+    );
+  }
+  return parts.join("\n");
+}
+
+// Replace the static <title>Paperclip</title> emitted by ui/index.html with the
+// instance brand name. Only fires when branding is enabled; otherwise the HTML
+// is returned untouched. The React <title> hijack via BreadcrumbContext still
+// runs after mount, but this avoids the "Paperclip" flash before hydration.
+function rewriteHtmlTitle(html: string, branding: InstanceUiBranding): string {
+  if (!branding.enabled || !branding.name) return html;
+  const escaped = escapeHtmlAttribute(branding.name);
+  return html
+    .replace(/<title>[^<]*<\/title>/i, `<title>${escaped}</title>`)
+    .replace(
+      /<meta\s+name="apple-mobile-web-app-title"\s+content="[^"]*"\s*\/>/i,
+      `<meta name="apple-mobile-web-app-title" content="${escaped}" />`,
+    );
+}
+
 function replaceMarkedBlock(html: string, startMarker: string, endMarker: string, content: string): string {
   const start = html.indexOf(startMarker);
   const end = html.indexOf(endMarker);
@@ -219,12 +299,25 @@ function replaceMarkedBlock(html: string, startMarker: string, endMarker: string
 }
 
 export function applyUiBranding(html: string, env: NodeJS.ProcessEnv = process.env): string {
-  const branding = getWorktreeUiBranding(env);
-  const withFavicon = replaceMarkedBlock(html, FAVICON_BLOCK_START, FAVICON_BLOCK_END, renderFaviconLinks(branding));
-  return replaceMarkedBlock(
+  const worktree = getWorktreeUiBranding(env);
+  const instance = getInstanceUiBranding(env);
+
+  // Stage 1: worktree favicon (dev ergonomics)
+  const withFavicon = replaceMarkedBlock(html, FAVICON_BLOCK_START, FAVICON_BLOCK_END, renderFaviconLinks(worktree));
+
+  // Stage 2: meta tags — both worktree and instance metas live in the same
+  // marked block, joined when both are active.
+  const worktreeMeta = renderRuntimeBrandingMeta(worktree);
+  const instanceMeta = renderInstanceBrandingMeta(instance);
+  const combinedMeta = [worktreeMeta, instanceMeta].filter(Boolean).join("\n");
+  const withMeta = replaceMarkedBlock(
     withFavicon,
     RUNTIME_BRANDING_BLOCK_START,
     RUNTIME_BRANDING_BLOCK_END,
-    renderRuntimeBrandingMeta(branding),
+    combinedMeta,
   );
+
+  // Stage 3: rewrite static <title> for instance branding so the first paint
+  // doesn't flash "Paperclip" before React hydrates the BreadcrumbContext.
+  return rewriteHtmlTitle(withMeta, instance);
 }

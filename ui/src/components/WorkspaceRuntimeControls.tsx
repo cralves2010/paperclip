@@ -11,6 +11,7 @@ import { Activity, ExternalLink, Loader2, Play, RotateCcw, Square } from "lucide
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { BRAND_NAME } from "@/lib/brand";
 
 export type WorkspaceRuntimeAction = "start" | "stop" | "restart" | "run";
 
@@ -431,7 +432,7 @@ export function WorkspaceRuntimeControls({
 
       <CommandSection
         title="Services"
-        description="Long-running commands that Paperclip can supervise for this workspace."
+        description={`Long-running commands that ${BRAND_NAME} can supervise for this workspace.`}
         items={resolvedSections.services}
         emptyMessage={resolvedServiceEmptyMessage}
         disabledHint={visibleDisabledHint}

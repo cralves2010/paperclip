@@ -10,6 +10,7 @@ import { useToast } from "@/context/ToastContext";
 import { Link } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
 import { Badge } from "@/components/ui/badge";
+import { BRAND_NAME } from "@/lib/brand";
 
 const inviteRoleOptions = [
   {
@@ -286,7 +287,7 @@ export function CompanyInvites() {
                 ) : null}
               </div>
               <div className="text-sm text-muted-foreground">
-                This URL includes the current Paperclip domain returned by the server.
+                This URL includes the current {BRAND_NAME} domain returned by the server.
               </div>
             </div>
             <label className="block space-y-1">

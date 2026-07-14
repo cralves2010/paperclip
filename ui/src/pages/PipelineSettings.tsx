@@ -112,6 +112,7 @@ import {
   type BreakdownCopyNames,
 } from "../lib/pipeline-breakdown";
 import { getPipelineStageColumnTone } from "../lib/pipeline-stage-presentation";
+import { BRAND_NAME } from "@/lib/brand";
 
 type StageSectionKey = "instructions" | "advanced" | "secrets" | "activity" | "history";
 type ApproverKind = "any_human" | "user" | "agent";
@@ -1904,7 +1905,7 @@ export function PipelineSettings() {
     onError: async (error) => {
       pushToast({
         title: "Failed to save stage",
-        body: error instanceof Error ? error.message : "Paperclip could not save the stage.",
+        body: error instanceof Error ? error.message : `${BRAND_NAME} could not save the stage.`,
         tone: "error",
       });
     },
@@ -1937,7 +1938,7 @@ export function PipelineSettings() {
           ? error.message
           : error instanceof Error
             ? error.message
-            : "Paperclip could not save the stage secrets.",
+            : `${BRAND_NAME} could not save the stage secrets.`,
         tone: "error",
       });
     },
@@ -2014,7 +2015,7 @@ export function PipelineSettings() {
     onError: (error) => {
       pushToast({
         title: "Failed to delete stage",
-        body: error instanceof Error ? error.message : "Paperclip could not delete the stage.",
+        body: error instanceof Error ? error.message : `${BRAND_NAME} could not delete the stage.`,
         tone: "error",
       });
     },
@@ -2046,7 +2047,7 @@ export function PipelineSettings() {
       setStrictTransitionsEnabled(pipeline?.enforceTransitions ?? false);
       pushToast({
         title: "Failed to update transition rules",
-        body: error instanceof Error ? error.message : "Paperclip could not update transition rules.",
+        body: error instanceof Error ? error.message : `${BRAND_NAME} could not update transition rules.`,
         tone: "error",
       });
     },
@@ -2308,7 +2309,7 @@ export function PipelineSettings() {
         <div className="space-y-1">
           <h3 className="text-sm font-semibold text-foreground">Break into smaller pieces</h3>
           <p className="max-w-md text-sm text-muted-foreground">
-            The agent decides what the pieces are. Paperclip creates and tracks them.
+            The agent decides what the pieces are. {BRAND_NAME} creates and tracks them.
           </p>
         </div>
         <ToggleSwitch
@@ -3000,7 +3001,7 @@ export function PipelineSettings() {
                               </div>
                               {selectedAutomationProject && !selectedAutomationProjectWorkspace ? (
                                 <p className="mt-2 text-xs text-muted-foreground">
-                                  This project has no saved workspace default. Paperclip will use the project fallback when automation runs.
+                                  This project has no saved workspace default. {BRAND_NAME} will use the project fallback when automation runs.
                                 </p>
                               ) : null}
                             </FieldRow>

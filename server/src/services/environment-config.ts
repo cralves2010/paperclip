@@ -57,12 +57,22 @@ const sshEnvironmentConfigSchema = z.object({
 }).strict();
 
 const sshEnvironmentConfigProbeSchema = sshEnvironmentConfigSchema.extend({
+  // SSH private keys must end with a trailing newline: OpenSSH/libcrypto
+  // rejects otherwise-valid keys with "error in libcrypto / Permission
+  // denied (publickey)" if the final \n after the -----END----- marker is
+  // missing (browsers often strip it on paste). Normalize CRLF from Windows
+  // pastes and trim outer whitespace without touching the PEM body's
+  // internal newlines, then append exactly one trailing newline.
   privateKey: z
     .string()
-    .trim()
     .optional()
     .nullable()
-    .transform((value) => (value && value.length > 0 ? value : null)),
+    .transform((value) => {
+      if (!value) return null;
+      const normalized = value.replace(/\r\n/g, "\n").trim();
+      if (normalized.length === 0) return null;
+      return normalized + "\n";
+    }),
 }).strict();
 
 const sshEnvironmentConfigPersistenceSchema = sshEnvironmentConfigProbeSchema;
@@ -570,14 +580,22 @@ export async function resolveEnvironmentDriverConfigForRuntime(
     // but must still resolve the active custom image as prepared runtime
     // configuration and tooling so the test reflects what real agent runs use.
     applyCustomImageTemplate?: boolean;
+    // When true, allow resolution against an unsaved environment (no id). Used
+    // for draft "Test draft" probes where the user is configuring the binding
+    // and the environment record does not exist yet. Binding existence check
+    // on the secret is skipped because the binding would only be created at
+    // save time. Audit access events still fire with a sentinel consumerId.
+    allowUnsavedDraft?: boolean;
   },
 ): Promise<ParsedEnvironmentConfig> {
   const parsed = parseEnvironmentDriverConfig(environment);
   const secrets = secretService(db);
   const environmentId = environment.id;
-  if (parsed.driver === "ssh" && parsed.config.privateKeySecretRef && !environmentId) {
+  const allowUnsavedDraft = context?.allowUnsavedDraft ?? false;
+  if (parsed.driver === "ssh" && parsed.config.privateKeySecretRef && !environmentId && !allowUnsavedDraft) {
     throw unprocessable("Runtime secret resolution requires an environment id");
   }
+  const consumerId = environmentId ?? "unsaved-environment-draft";
 
   if (parsed.driver === "ssh" && parsed.config.privateKeySecretRef) {
     if (!companyId) {
@@ -593,12 +611,13 @@ export async function resolveEnvironmentDriverConfigForRuntime(
           parsed.config.privateKeySecretRef.version ?? "latest",
           {
             consumerType: "environment",
-            consumerId: environmentId!,
+            consumerId,
             actorType: "system",
             actorId: null,
             issueId: context?.issueId ?? null,
             heartbeatRunId: context?.heartbeatRunId ?? null,
             configPath: "privateKeySecretRef",
+            skipBindingCheck: allowUnsavedDraft,
           },
         ),
       },
@@ -615,7 +634,7 @@ export async function resolveEnvironmentDriverConfigForRuntime(
         config: parsed.config as Record<string, unknown>,
         schema,
         context: {
-          consumerId: environmentId!,
+          consumerId,
           issueId: context?.issueId ?? null,
           heartbeatRunId: context?.heartbeatRunId ?? null,
         },

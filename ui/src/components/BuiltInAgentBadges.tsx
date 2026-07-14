@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { brandChipBadge } from "@/lib/status-colors";
 import type { BuiltInAgentStatus } from "@/api/builtInAgents";
+import { BRAND_NAME } from "@/lib/brand";
 
 /**
  * Provenance label ("Built-in"). Constant for the life of a built-in agent —
@@ -23,7 +24,7 @@ export function BuiltInAgentBadge({
         compact && "px-1.5 py-0 text-(length:--text-nano)",
         className,
       )}
-      title="Ships with Paperclip"
+      title={`Ships with ${BRAND_NAME}`}
     >
       Built-in
     </Badge>
