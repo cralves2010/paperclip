@@ -2,6 +2,7 @@ import boltPkg from '@slack/bolt'
 import { loadConfig } from './config.js'
 import { ensureCockpitStateTab } from './cockpit-state.js'
 import { registerHandlers } from './handlers.js'
+import { installSocketWatchdog } from './watchdog.js'
 
 const { App } = boltPkg
 
@@ -23,3 +24,8 @@ if (!cfg.demo) {
 
 await app.start()
 console.log('⚡ Agent M42 cockpit running (socket mode)')
+
+// Self-heal a silently-deaf Socket Mode link (the 2026-07-10 4-day freeze):
+// turn a dead-but-alive socket into a clean exit so `restart: unless-stopped`
+// gives us a fresh connection. See watchdog.ts for the full incident note.
+installSocketWatchdog(app)
