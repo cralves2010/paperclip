@@ -96,8 +96,11 @@ jobs:
             fi
           else
             echo "result=conflict" >> "$GITHUB_OUTPUT"
+            # Capture the conflicting paths BEFORE aborting, so the issue names them
+            CONFLICTS=$(git diff --name-only --diff-filter=U | head -30 | tr '\n' ' ')
+            echo "conflicts=$CONFLICTS" >> "$GITHUB_OUTPUT"
             git rebase --abort || true
-            echo "::warning::rebase conflict in branding/m42 — needs manual resolution"
+            echo "::warning::rebase conflict in branding/m42 — needs manual resolution ($CONFLICTS)"
           fi
 
       - name: Open issue if conflict or divergence
@@ -114,11 +117,23 @@ jobs:
           elif [ "${{ steps.rebase.outputs.result }}" = "conflict" ]; then
             REASON="rebase conflict between branding/m42 and master"
           fi
+          # DEDUP: if an open sync/needs-manual issue already exists, comment on it
+          # instead of piling a new issue every week (6 duplicates by 2026-07-14).
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --label "sync" --label "needs-manual" \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body \
+              "Sync failed again on $DATE — $REASON. Conflicting files: ${{ steps.rebase.outputs.conflicts || 'n/a' }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "::notice::commented on existing sync issue #$EXISTING"
+            exit 1
+          fi
           BODY=$(cat <<EOF
           The weekly upstream sync workflow could not complete automatically.
 
           **Reason:** $REASON
           **New upstream commits on master:** ${{ steps.master_sync.outputs.new_commits }}
+          **Conflicting files:** ${{ steps.rebase.outputs.conflicts || 'n/a' }}
 
           ## Manual resolution
 
