@@ -133,6 +133,10 @@ async function load(sheets) {
     claimedBy: idx('Claimed By'),
     claimTs: idx('Claim TS'),
     link: idx('Deliverable Link'),
+    // Read-only for the radar: the capped buckets use it so a P0 is never the row
+    // that gets folded into the "+N mais" counter. Optional on purpose, every
+    // consumer must tolerate -1 (see priorityOf).
+    priority: idx('Priority Tier') >= 0 ? idx('Priority Tier') : idx('Priority'),
   }
   if (cols.task < 0 || cols.status < 0 || cols.updated < 0)
     die('Derek columns (Task #/Status/Last updated) not found — tab layout changed, STOP and tell Claudio')
@@ -817,6 +821,7 @@ if (cmd === 'radar') {
     const business = tcell(r, data.cols.business)
     const title = clamp(tcell(r, data.cols.title), 80)
     const upd = dayMs(tcell(r, data.cols.updated))
+    const priority = data.cols.priority >= 0 ? tcell(r, data.cols.priority) : ''
 
     // a. 🟣 verdict backlog — flagged until claimed or status changed; never capped.
     if (/^changes requested/i.test(status) && !claimedBy)
@@ -858,7 +863,7 @@ if (cmd === 'radar') {
       // h. 🕰️ the other side of the same coin. The ≤7d ceiling above meant that the
       // OLDER an abandoned row got, the quieter it became: 70 rows had aged out of
       // every bucket. Capped render, oldest first, so it informs without flooding.
-      else S.notStartedAging.push({ taskNum: tn, business, title, ageDays: ageDays(upd), next: `node tracker.mjs claim ${tn} --window cc-<you>` })
+      else S.notStartedAging.push({ taskNum: tn, business, title, priority, ageDays: ageDays(upd), next: `node tracker.mjs claim ${tn} --window cc-<you>` })
     }
 
     // i. 🟡 In Progress and not moving. This was the ONLY one of the four official
@@ -866,7 +871,7 @@ if (cmd === 'radar') {
     // spot is what hid #138 (Brightly tech app) for 15 days until Derek asked twice.
     if (/^in progress$/i.test(status)) {
       if (upd === null) noDate.add(r)
-      else if (ageDays(upd) > 7) S.inProgressStale.push({ taskNum: tn, business, title, ageDays: ageDays(upd), next: `node tracker.mjs row ${tn}  (still moving? update col N or re-scope)` })
+      else if (ageDays(upd) > 7) S.inProgressStale.push({ taskNum: tn, business, title, priority, ageDays: ageDays(upd), next: `node tracker.mjs row ${tn}  (still moving? update col N or re-scope)` })
     }
   }
 
@@ -957,11 +962,23 @@ if (cmd === 'radar') {
   // Capped: these two buckets were born holding ~116 rows between them. Rendering
   // all of them would drown the radar and get it ignored, which is the failure mode
   // we are fixing. Top 5 oldest plus a counter keeps the signal and the pressure.
+  // A P0 is never folded into the counter, however young it is.
+  //
+  // Why this exists: the cap sorts oldest-first, so a row that has JUST crossed the
+  // 7-day line lands at the BOTTOM and disappears into "+N mais". #138 (Brightly tech
+  // app) would have re-entered this bucket on 2026-08-06 as the youngest of roughly
+  // thirty rows and gone quiet again, which is the exact failure this bucket was
+  // built on 2026-07-30 to prevent. Age is the wrong sort key for a critical row.
+  const isCritical = (it) => /^p0\b/i.test((it.priority ?? '').trim())
   const capped = (emoji, name, items, cap, fmt) => {
     if (!items.length) return
-    console.log(`\n${emoji} ${name} (${items.length})`)
-    for (const it of items.slice(0, cap)) console.log(`  ${fmt(it)}`)
-    if (items.length > cap) console.log(`  (+${items.length - cap} mais — 'node tracker.mjs radar --json' lista todas)`)
+    const critical = items.filter(isCritical)
+    const rest = items.filter((it) => !isCritical(it))
+    const shown = [...critical, ...rest.slice(0, Math.max(0, cap - critical.length))]
+    const hidden = items.length - shown.length
+    console.log(`\n${emoji} ${name} (${items.length}${critical.length ? `, ${critical.length} P0` : ''})`)
+    for (const it of shown) console.log(`  ${isCritical(it) ? '🔴 ' : ''}${fmt(it)}`)
+    if (hidden > 0) console.log(`  (+${hidden} mais, nenhuma delas P0 — 'node tracker.mjs radar --json' lista todas)`)
   }
   capped('🟡', 'IN PROGRESS, PARADAS > 7d', S.inProgressStale, 5, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.ageDays}d sem update  →  ${it.next}`)
   capped('🕰️', 'NOT STARTED, ESQUECIDAS > 7d', S.notStartedAging, 5, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.ageDays}d old  →  ${it.next}`)
