@@ -806,7 +806,7 @@ if (cmd === 'radar') {
   const ageDays = (t) => Math.floor((Date.now() - t) / 86400000)
   const DEREK_ID = 'U08APFXGJ4U'
 
-  const S = { changesRequested: [], agingReviews: [], blockedAging: [], staleClaims: [], linkMissing: [], commentBacklog: null, unclaimedNew: [], logPulse: null }
+  const S = { changesRequested: [], agingReviews: [], blockedAging: [], staleClaims: [], linkMissing: [], commentBacklog: null, unclaimedNew: [], notStartedAging: [], inProgressStale: [], logPulse: null }
   const noDate = new Set() // tracker rows an age bucket wanted but whose col N was unparseable
 
   for (let r = 1; r < data.rows.length; r++) {
@@ -829,7 +829,11 @@ if (cmd === 'radar') {
     }
 
     // c. 🔴 blocked > 5 days
-    if (/^blocked —/i.test(status)) {
+    // Word-boundary, NOT "blocked —": the em-dash ban of 2026-07-29 means new rows
+    // are written "Blocked: reason" / "Blocked, reason" / plain "Blocked". The old
+    // literal-em-dash matcher silently hid every one of them (found 2026-07-30:
+    // #22, #47 and #7 invisible for 30 days).
+    if (/^blocked\b/i.test(status)) {
       if (upd === null) noDate.add(r)
       else if (ageDays(upd) > 5) S.blockedAging.push({ taskNum: tn, business, title, status, ageDays: ageDays(upd), next: `node tracker.mjs row ${tn}  (re-check the blocker; escalate to Claudio)` })
     }
@@ -851,6 +855,18 @@ if (cmd === 'radar') {
     if (/^not started$/i.test(status) && !claimedBy) {
       if (upd === null) noDate.add(r)
       else if (ageDays(upd) <= 7) S.unclaimedNew.push({ taskNum: tn, business, title, ageDays: ageDays(upd), next: `node tracker.mjs claim ${tn} --window cc-<you>` })
+      // h. 🕰️ the other side of the same coin. The ≤7d ceiling above meant that the
+      // OLDER an abandoned row got, the quieter it became: 70 rows had aged out of
+      // every bucket. Capped render, oldest first, so it informs without flooding.
+      else S.notStartedAging.push({ taskNum: tn, business, title, ageDays: ageDays(upd), next: `node tracker.mjs claim ${tn} --window cc-<you>` })
+    }
+
+    // i. 🟡 In Progress and not moving. This was the ONLY one of the four official
+    // statuses with no alarm at all, and 46 of 130 open rows sat in it. That blind
+    // spot is what hid #138 (Brightly tech app) for 15 days until Derek asked twice.
+    if (/^in progress$/i.test(status)) {
+      if (upd === null) noDate.add(r)
+      else if (ageDays(upd) > 7) S.inProgressStale.push({ taskNum: tn, business, title, ageDays: ageDays(upd), next: `node tracker.mjs row ${tn}  (still moving? update col N or re-scope)` })
     }
   }
 
@@ -908,7 +924,11 @@ if (cmd === 'radar') {
 
   const cb = S.commentBacklog
   const cbCount = cb.unseenDerek + cb.unseenOthers + cb.deferred + cb.awaitingDerekOver3d.length
-  const total = S.changesRequested.length + S.agingReviews.length + S.blockedAging.length + S.staleClaims.length + S.linkMissing.length + cbCount + S.unclaimedNew.length
+  // Oldest first: in an aging bucket the top of the list is the one that hurts.
+  S.notStartedAging.sort((a, b) => b.ageDays - a.ageDays)
+  S.inProgressStale.sort((a, b) => b.ageDays - a.ageDays)
+
+  const total = S.changesRequested.length + S.agingReviews.length + S.blockedAging.length + S.staleClaims.length + S.linkMissing.length + cbCount + S.unclaimedNew.length + S.notStartedAging.length + S.inProgressStale.length
   audit({ cmd, total })
 
   if (asJson) {
@@ -934,6 +954,17 @@ if (cmd === 'radar') {
     for (const a of cb.awaitingDerekOver3d) console.log(`  awaiting Derek > 3d: ${a.key} (${a.ageDays}d)  →  draft a nudge for Derek (send via Claudio)`)
   }
   section('🆕', 'UNCLAIMED NEW (minted ≤ 7d, nobody picked up)', S.unclaimedNew, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.ageDays}d old  →  ${it.next}`)
+  // Capped: these two buckets were born holding ~116 rows between them. Rendering
+  // all of them would drown the radar and get it ignored, which is the failure mode
+  // we are fixing. Top 5 oldest plus a counter keeps the signal and the pressure.
+  const capped = (emoji, name, items, cap, fmt) => {
+    if (!items.length) return
+    console.log(`\n${emoji} ${name} (${items.length})`)
+    for (const it of items.slice(0, cap)) console.log(`  ${fmt(it)}`)
+    if (items.length > cap) console.log(`  (+${items.length - cap} mais — 'node tracker.mjs radar --json' lista todas)`)
+  }
+  capped('🟡', 'IN PROGRESS, PARADAS > 7d', S.inProgressStale, 5, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.ageDays}d sem update  →  ${it.next}`)
+  capped('🕰️', 'NOT STARTED, ESQUECIDAS > 7d', S.notStartedAging, 5, (it) => `#${it.taskNum} [${it.business}] ${it.title} · ${it.ageDays}d old  →  ${it.next}`)
   const fmtPulse = (o) => Object.entries(o).map(([k, v]) => `${k}×${v}`).join(', ') || 'none'
   console.log(
     S.logPulse.found
