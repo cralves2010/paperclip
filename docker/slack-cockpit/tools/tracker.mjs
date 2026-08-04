@@ -517,6 +517,13 @@ if (cmd === 'comment-add') {
   const taskN = pos[0]
   if (!taskN) die('comment-add needs a <task#>')
   const author = typeof flags.author === 'string' ? flags.author : 'Agent M42 (cc-sweep)'
+  // Enforce the machine-identity contract above (doc-only until 2026-08-04):
+  // Derek is never an author (attribution belongs in --text); Claudio only via
+  // the "... via Agent M42" proxy form used by the traceability A-out mirror.
+  if (/\bDerek\b|U08APFXGJ4U/i.test(author))
+    die('comment-add author must be a machine identity, never Derek (put attribution in --text)')
+  if (/\bClaudio\b|U08C8QTNBJ9/i.test(author) && !author.includes('via Agent M42'))
+    die('Claudio-attributed comments must use the "... via Agent M42" author form')
   const text = typeof flags.text === 'string' ? flags.text : null
   if (!text) die(`comment-add needs --text "<t>"`)
   if (flags['allow-dup'] !== true) {
