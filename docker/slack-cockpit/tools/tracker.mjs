@@ -101,9 +101,17 @@ function parseArgs(argv) {
 }
 
 async function sheetsClient(write) {
-  if (!fs.existsSync(KEY)) die(`SA key not found at ${KEY} (set TRACKER_SA_JSON)`)
+  // TRACKER_SA_JSON takes the key FILE PATH (PC) or the JSON CONTENT (cloud Routine).
+  // No error message may echo the value or the parse error text: on 2026-10-01 the old
+  // message printed the whole private key into a Routine session log.
+  const inline = KEY.trimStart().startsWith('{')
+  if (!inline && !fs.existsSync(KEY)) die('SA key not found (set TRACKER_SA_JSON to the key path or its JSON content)')
+  let credentials
+  if (inline) {
+    try { credentials = JSON.parse(KEY) } catch (e) { die(`SA key unreadable (variable content, ${e.name})`) }
+  }
   const auth = new google.auth.GoogleAuth({
-    keyFile: KEY,
+    ...(inline ? { credentials } : { keyFile: KEY }),
     scopes: [
       write
         ? 'https://www.googleapis.com/auth/spreadsheets'
