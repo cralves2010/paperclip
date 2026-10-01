@@ -52,7 +52,8 @@ import path from 'node:path'
 
 const SHEET_ID = '1K2YFr0GbjrUinVfcADkEBU94C071zGCJ5aS0dFeVH8A'
 const TAB = 'Tracker'
-const KEY = process.env.TRACKER_SA_JSON || path.join(os.homedir(), '.m42', 'm42-cockpit-sa.json')
+// Aspas simples ou duplas em volta do valor (o editor de variaveis da Routine aceita as duas) sao removidas.
+const KEY = (process.env.TRACKER_SA_JSON || '').trim().replace(/^(['"])([\s\S]*)\1$/, '$2') || path.join(os.homedir(), '.m42', 'm42-cockpit-sa.json')
 const LOG = path.join(os.homedir(), '.m42', 'tracker-log.jsonl')
 const STALE_HOURS = 3
 
